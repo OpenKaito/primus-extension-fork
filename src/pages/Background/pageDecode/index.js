@@ -111,6 +111,7 @@ let onBeforeRequestFn = () => {};
 let onCompletedFn = () => {};
 let requestsMap = {};
 let reportRequestIds = [];
+let hasStartedPageDecodeAttestation = false;
 
 const sendMsgToSdk = async (msg) => {
   const { padoZKAttestationJSSDKDappTabId: dappTabId } =
@@ -163,6 +164,7 @@ const resetVarsFn = () => {
   chatgptHasLogin = false;
   requestsMap = {};
   reportRequestIds = [];
+  hasStartedPageDecodeAttestation = false;
   chrome.runtime.onMessage.removeListener(listenerFn);
 };
 const handlerForSdk = async (processAlgorithmReq, operation) => {
@@ -877,6 +879,12 @@ export const pageDecodeMsgListener = async (
             isReady: isReadyRequest,
           },
         });
+        const { kaitoPrimusDisallowTabCreate } = await chrome.storage.local.get(
+          ['kaitoPrimusDisallowTabCreate']
+        );
+        if (kaitoPrimusDisallowTabCreate && activeTemplate.sdkVersion) {
+          await startPageDecodeAttestationFn();
+        }
       }
     };
 
@@ -1202,6 +1210,48 @@ export const pageDecodeMsgListener = async (
         form,
         activeTemplate
       );
+    };
+
+    const startPageDecodeAttestationFn = async () => {
+      if (hasStartedPageDecodeAttestation) {
+        return;
+      }
+      if (!formatAlgorithmParams) {
+        await formatAlgorithmParamsFn();
+      }
+      hasStartedPageDecodeAttestation = true;
+      await chrome.storage.local.set({
+        beginAttest: '1',
+      });
+      let aligorithmParams = Object.assign(
+        { isUserClick: 'true' },
+        formatAlgorithmParams
+      );
+      await chrome.storage.local.set({
+        activeRequestAttestation: JSON.stringify(aligorithmParams),
+      });
+      console.log('pageDecode-algorithmParams', aligorithmParams);
+
+      var eventInfo = {
+        eventType: 'ATTESTATION_START_PAGEDECODE',
+        rawData: {
+          source: aligorithmParams.source,
+          schemaType: aligorithmParams.schemaType,
+          sigFormat: aligorithmParams.sigFormat,
+          attestationId: aligorithmParams.requestid,
+          event: aligorithmParams.event,
+          address: aligorithmParams?.user?.address,
+          requestid: aligorithmParams.requestid,
+          order: '3',
+        },
+      };
+      eventInfo.rawData = await addSDKParamsToReportParamsFn(eventInfo.rawData);
+      eventReport(eventInfo);
+      chrome.runtime.sendMessage({
+        type: 'algorithm',
+        method: 'getAttestation',
+        params: JSON.parse(JSON.stringify(aligorithmParams)),
+      });
     };
 
     const preAlgorithmFn = async () => {
@@ -1590,9 +1640,26 @@ export const pageDecodeMsgListener = async (
         ['responseHeaders', 'extraHeaders']
       );
 
-      const tabCreatedByPado = await chrome.tabs.create({
-        url: jumpTo,
-      });
+      const {
+        padoZKAttestationJSSDKDappTabId: dappTabId,
+        kaitoPrimusDisallowTabCreate,
+      } = await chrome.storage.local.get([
+        'padoZKAttestationJSSDKDappTabId',
+        'kaitoPrimusDisallowTabCreate',
+      ]);
+      let tabCreatedByPado;
+      let reloadExistingDataSourcePage = false;
+      if (kaitoPrimusDisallowTabCreate && dappTabId) {
+        tabCreatedByPado = await chrome.tabs.get(dappTabId).catch(() => null);
+        if (!tabCreatedByPado) {
+          throw new Error('kaito_auto_tab_create_blocked');
+        }
+        reloadExistingDataSourcePage = true;
+      } else {
+        tabCreatedByPado = await chrome.tabs.create({
+          url: jumpTo,
+        });
+      }
       dataSourcePageTabId = tabCreatedByPado.id;
       console.log('pageDecode dataSourcePageTabId:', dataSourcePageTabId);
       const injectFn = async () => {
@@ -1605,6 +1672,72 @@ export const pageDecodeMsgListener = async (
         await chrome.scripting.insertCSS({
           target: { tabId: dataSourcePageTabId },
           files: ['static/css/pageDecode.css'],
+        });
+      };
+      const triggerExistingDataSourceRequestsFn = async () => {
+        const targetUrlExpressions = requests
+          .filter((r) => r.name !== 'first')
+          .map((r) => r.url)
+          .filter(Boolean);
+        if (!targetUrlExpressions.length) {
+          return;
+        }
+        await chrome.scripting.executeScript({
+          target: {
+            tabId: dataSourcePageTabId,
+          },
+          args: [targetUrlExpressions],
+          func: async (expressions) => {
+            const normalizeLiteralUrl = (expression) => {
+              let value = String(expression || '').trim();
+              value = value.replace(/\(\?:\\\?\.\*\)\?\$$/, '');
+              value = value.replace(/\$$/, '');
+              value = value.replace(/\\\./g, '.');
+              value = value.replace(/\\\//g, '/');
+              if (
+                /^https?:\/\//.test(value) &&
+                !/[()[\]{}|+*?^$]/.test(value)
+              ) {
+                return value;
+              }
+              return '';
+            };
+            const matchesExpression = (url, expression) => {
+              const literalUrl = normalizeLiteralUrl(expression);
+              if (literalUrl) {
+                return url === literalUrl || url.startsWith(`${literalUrl}?`);
+              }
+              try {
+                return new RegExp(`^${expression}`).test(url);
+              } catch {
+                return url === expression || url.startsWith(`${expression}?`);
+              }
+            };
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            const resources = performance
+              .getEntriesByType('resource')
+              .map((entry) => entry.name)
+              .filter((url) => /^https?:\/\//.test(url));
+            const urls = expressions
+              .map((expression) => {
+                const literalUrl = normalizeLiteralUrl(expression);
+                if (literalUrl) {
+                  return literalUrl;
+                }
+                return [...resources]
+                  .reverse()
+                  .find((url) => matchesExpression(url, expression));
+              })
+              .filter((url, index, arr) => url && arr.indexOf(url) === index);
+            for (const url of urls) {
+              try {
+                await fetch(url, {
+                  credentials: 'include',
+                  cache: 'no-store',
+                });
+              } catch {}
+            }
+          },
         });
       };
 
@@ -1635,7 +1768,12 @@ export const pageDecodeMsgListener = async (
           chrome.webRequest.onCompleted.removeListener(onCompletedFn);
         }
       });
-      await injectFn();
+      if (reloadExistingDataSourcePage) {
+        await injectFn();
+        await triggerExistingDataSourceRequestsFn();
+      } else {
+        await injectFn();
+      }
     }
     if (name === 'initCompleted') {
       console.log('content_scripts-bg-decode receive:initCompleted');
@@ -1655,38 +1793,7 @@ export const pageDecodeMsgListener = async (
       checkWebRequestIsReadyFn();
     }
     if (name === 'start') {
-      await chrome.storage.local.set({
-        beginAttest: '1',
-      });
-      let aligorithmParams = Object.assign(
-        { isUserClick: 'true' },
-        formatAlgorithmParams
-      );
-      await chrome.storage.local.set({
-        activeRequestAttestation: JSON.stringify(aligorithmParams),
-      });
-      console.log('pageDecode-algorithmParams', aligorithmParams);
-
-      var eventInfo = {
-        eventType: 'ATTESTATION_START_PAGEDECODE',
-        rawData: {
-          source: aligorithmParams.source,
-          schemaType: aligorithmParams.schemaType,
-          sigFormat: aligorithmParams.sigFormat,
-          attestationId: aligorithmParams.requestid,
-          event: aligorithmParams.event,
-          address: aligorithmParams?.user?.address,
-          requestid: aligorithmParams.requestid,
-          order: '3',
-        },
-      };
-      eventInfo.rawData = await addSDKParamsToReportParamsFn(eventInfo.rawData);
-      eventReport(eventInfo);
-      chrome.runtime.sendMessage({
-        type: 'algorithm',
-        method: 'getAttestation',
-        params: JSON.parse(JSON.stringify(aligorithmParams)),
-      });
+      await startPageDecodeAttestationFn();
       // if (!activeTemplate.sdkVersion) {
       //   const { constructorF } = DATASOURCEMAP[dataSource];
       //   if (constructorF) {

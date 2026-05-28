@@ -424,7 +424,8 @@ export const padoZKAttestationJSSDKMsgListener = async (
               params.attRequest?.attMode?.algorithmType || 'proxytls', // TODO-zktls
             sdkVersion,
             ext: {
-              appSignParameters: JSON.stringify(params.attRequest),
+              appSignParameters:
+                params.kaitoRawAttRequest || JSON.stringify(params.attRequest),
               appSignature,
               padoUrl,
               proxyUrl,

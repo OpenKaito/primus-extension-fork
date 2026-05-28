@@ -94,7 +94,7 @@ export const algorithmMsgListener = async (
     }
     if (resMethodName === 'getAttestation') {
       const { retcode, isUserClick } = JSON.parse(message.res);
-      if (isUserClick === 'true') {
+      if (isUserClick === 'true' || padoZKAttestationJSSDKBeginAttest) {
         let msgObj = {};
         let result = false;
         if (retcode === '0') {
@@ -193,7 +193,7 @@ export const algorithmMsgListener = async (
       const { retcode, content, retdesc, details, isUserClick } = JSON.parse(
         message.res
       );
-      if (isUserClick === 'true') {
+      if (isUserClick === 'true' || padoZKAttestationJSSDKBeginAttest) {
         await chrome.storage.local.set({
           getAttestationResultRes: message.res,
         });
