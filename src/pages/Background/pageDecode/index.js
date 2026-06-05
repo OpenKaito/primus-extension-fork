@@ -494,14 +494,36 @@ export const pageDecodeMsgListener = async (
       const thisResponseObj = responses[thisRequestUrlIdx];
 
       const { url, urlType, queryParams, ignoreResponse } = thisRequestObj;
+      const bodyMatchesTemplate = (requestInfo, templateRequest) => {
+        const matchKeys = templateRequest?.matchReqBodyKey;
+        if (!Array.isArray(matchKeys) || matchKeys.length === 0) {
+          return true;
+        }
+        const body = requestInfo?.body;
+        if (!body || typeof body !== 'object') {
+          return false;
+        }
+        return matchKeys.every(({ key, value }) => {
+          if (!key || !(key in body)) {
+            return false;
+          }
+          return value === undefined || String(body[key]) === String(value);
+        });
+      };
       const thisRequestUrlFoundFlag = Object.values(requestsMap).find(
-        (v) => v.templateRequestUrl === url && v.isTarget === 1
+        (v) =>
+          v.templateRequestUrl === url &&
+          v.isTarget === 1 &&
+          bodyMatchesTemplate(v, thisRequestObj)
       );
 
       if (!thisRequestUrlFoundFlag) {
         if (ignoreResponse) {
           Object.values(requestsMap).some((sInfo) => {
             if (sInfo.templateRequestUrl === url && sInfo.headers) {
+              if (!bodyMatchesTemplate(sInfo, thisRequestObj)) {
+                return false;
+              }
               sInfo.isTarget = 1;
               return true;
             }
@@ -514,7 +536,7 @@ export const pageDecodeMsgListener = async (
               urlType: urlType || 'REGX',
               queryParams: queryParams,
             });
-            return checkRes;
+            return checkRes && bodyMatchesTemplate(requestsMap[key], thisRequestObj);
           });
           for (const matchRequestId of [...matchRequestIdArr]) {
             if (requestsMap[matchRequestId]?.isTarget === 1) {
