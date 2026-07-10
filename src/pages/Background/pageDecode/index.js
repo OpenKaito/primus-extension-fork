@@ -153,6 +153,17 @@ const storeRequestsMap = (url, urlInfo) => {
   return requestsMap[url];
 };
 
+const getHeaderValue = (headers = {}, headerName = '') => {
+  const key = Object.keys(headers || {}).find(
+    (h) => h.toLowerCase() === headerName.toLowerCase()
+  );
+  return key ? headers[key] : undefined;
+};
+
+const hasAuthorizationHeader = (headers = {}) => {
+  return !!getHeaderValue(headers, 'authorization');
+};
+
 const resetVarsFn = () => {
   isReadyRequest = false;
   operationType = null;
@@ -536,7 +547,9 @@ export const pageDecodeMsgListener = async (
               urlType: urlType || 'REGX',
               queryParams: queryParams,
             });
-            return checkRes && bodyMatchesTemplate(requestsMap[key], thisRequestObj);
+            return (
+              checkRes && bodyMatchesTemplate(requestsMap[key], thisRequestObj)
+            );
           });
           for (const matchRequestId of [...matchRequestIdArr]) {
             if (requestsMap[matchRequestId]?.isTarget === 1) {
@@ -826,7 +839,7 @@ export const pageDecodeMsgListener = async (
               let targetRequestId = activeRequestInfo.requestId;
               const sRrequestObj = requestsMap[targetRequestId] || {};
               // console.log('sRrequestObj', storageObj, url, sRrequestObj, r);
-              chatgptHasLogin = !!sRrequestObj?.headers?.Authorization;
+              chatgptHasLogin = hasAuthorizationHeader(sRrequestObj?.headers);
               const headersFlag =
                 !r.headers || (!!r.headers && !!sRrequestObj.headers);
               const bodyFlag = !r.body || (!!r.body && !!sRrequestObj.body);
@@ -875,6 +888,15 @@ export const pageDecodeMsgListener = async (
 
           if (fl) {
             if (dataSource === 'chatgpt') {
+              // Two-stage serialization: wait for preAlgorithmFn's offline
+              // pre-generation to reach RUNNING_PAUSE (preAlgorithmStatus==='1')
+              // before the readiness-driven online run (startPageDecodeAttestationFn)
+              // starts, so the two do not collide ("can not re-run online").
+              // With the upstream capture fixes in place (onCompleted <all_urls>,
+              // RequestsHasCompleted set directly, conversation-extra guard) the
+              // offline run is no longer disrupted and can reach the pause.
+              // Single-stage online-only never completes for chatgpt (times out
+              // even at 8 min), so this pre-run gate is required.
               fl =
                 !!f &&
                 chatgptHasLogin &&
@@ -1070,35 +1092,52 @@ export const pageDecodeMsgListener = async (
         if (chatGPTExpression) {
           aligorithmParams.chatGPTExpression = chatGPTExpression;
         }
+        // Legacy ChatGPT *conversation* verification appended a second request
+        // (backend-api/conversation) whose messageIds rewrote formatRequests[1]
+        // / formatResponse[1]. The subscription verification is a single GET
+        // (backend-api/subscriptions) with no conversation-extra stored, so this
+        // block would destructure `{}` (throw) and index a non-existent
+        // formatRequests[1]. Only run it when the conversation-extra actually
+        // exists and a second request is present; otherwise fall through with
+        // the generic single-request params built above.
         const extraRequestSK = `https://chatgpt.com/backend-api/conversation-extra`;
         const extraSObj = await chrome.storage.local.get([extraRequestSK]);
         const extraRequestInfo = extraSObj[extraRequestSK]
           ? JSON.parse(extraSObj[extraRequestSK])
-          : {};
-        const {
-          request: {
-            url,
-            method,
-            headers: { host },
-          },
-          response: { messageIds },
-        } = extraRequestInfo;
+          : null;
+        if (
+          extraRequestInfo &&
+          extraRequestInfo.request &&
+          extraRequestInfo.response &&
+          Array.isArray(extraRequestInfo.response.messageIds) &&
+          formatRequests[1] &&
+          formatResponse[1]
+        ) {
+          const {
+            request: {
+              url,
+              method,
+              headers: { host },
+            },
+            response: { messageIds },
+          } = extraRequestInfo;
 
-        formatRequests[1].url = url;
-        formatRequests[1].method = method;
-        formatRequests[1].headers.host = host;
-        let originSubConditionItem =
-          formatResponse[1].conditions.subconditions[0];
-        formatResponse[1].conditions.subconditions = [];
-        messageIds.forEach((mK) => {
-          const fieldArr = originSubConditionItem.field.split('.');
-          fieldArr[2] = mK;
-          formatResponse[1].conditions.subconditions.push({
-            ...originSubConditionItem,
-            reveal_id: mK,
-            field: fieldArr.join('.'),
+          formatRequests[1].url = url;
+          formatRequests[1].method = method;
+          formatRequests[1].headers.host = host;
+          let originSubConditionItem =
+            formatResponse[1].conditions.subconditions[0];
+          formatResponse[1].conditions.subconditions = [];
+          messageIds.forEach((mK) => {
+            const fieldArr = originSubConditionItem.field.split('.');
+            fieldArr[2] = mK;
+            formatResponse[1].conditions.subconditions.push({
+              ...originSubConditionItem,
+              reveal_id: mK,
+              field: fieldArr.join('.'),
+            });
           });
-        });
+        }
       } else {
         if (activeTemplate.attTemplateID === templateIdForMonad) {
           const { formatRequests: req, formatResponse: res } =
@@ -1397,9 +1436,16 @@ export const pageDecodeMsgListener = async (
       chrome.webRequest.onBeforeRequest.removeListener(onBeforeRequestFn);
       chrome.webRequest.onCompleted.removeListener(onCompletedFn);
       onBeforeSendHeadersFn = async (details) => {
+        const isOwnExtensionInitiated = details?.initiator?.startsWith(
+          `chrome-extension://${chrome.runtime.id}`
+        );
+        const isChatgptSubscriptionUrl = details?.url?.startsWith(
+          'https://chatgpt.com/backend-api/subscriptions?'
+        );
         if (
-          details?.initiator?.startsWith(
-            `chrome-extension://${chrome.runtime.id}`
+          isOwnExtensionInitiated &&
+          !(
+            activeTemplate?.dataSource === 'chatgpt' && isChatgptSubscriptionUrl
           )
         ) {
           return;
@@ -1437,7 +1483,7 @@ export const pageDecodeMsgListener = async (
         if (
           currRequestUrl === 'https://chatgpt.com/public-api/conversation_limit'
         ) {
-          chatgptHasLogin = !!formatHeader.Authorization;
+          chatgptHasLogin = hasAuthorizationHeader(formatHeader);
           if (dataSource === 'chatgpt') {
             const tipStr = chatgptHasLogin ? 'toMessage' : 'toLogin';
             console.log('setUIStep-', tipStr);
@@ -1512,6 +1558,14 @@ export const pageDecodeMsgListener = async (
         //   details
         // );
         if (isTarget) {
+          if (
+            dataSource === 'chatgpt' &&
+            !hasAuthorizationHeader(formatHeader)
+          ) {
+            // ChatGPT subscriptions authenticates with a Bearer header; a
+            // cookie-only request (bare 401) must not be captured as the target.
+            return;
+          }
           console.log('monad-details', details);
           let newCapturedInfo = {
             headers: formatHeader,
@@ -1613,9 +1667,16 @@ export const pageDecodeMsgListener = async (
         }
       };
       onCompletedFn = async (details) => {
+        const isOwnExtensionInitiated = details?.initiator?.startsWith(
+          `chrome-extension://${chrome.runtime.id}`
+        );
+        const isChatgptSubscriptionUrl = details?.url?.startsWith(
+          'https://chatgpt.com/backend-api/subscriptions?'
+        );
         if (
-          details?.initiator?.startsWith(
-            `chrome-extension://${chrome.runtime.id}`
+          isOwnExtensionInitiated &&
+          !(
+            activeTemplate?.dataSource === 'chatgpt' && isChatgptSubscriptionUrl
           )
         ) {
           return;
@@ -1626,6 +1687,23 @@ export const pageDecodeMsgListener = async (
         let { dataSource } = activeTemplate;
 
         if (dataSource === 'chatgpt') {
+          const completedRequest = requestsMap[details.requestId];
+          if (
+            !completedRequest ||
+            !hasAuthorizationHeader(completedRequest.headers) ||
+            details.statusCode < 200 ||
+            details.statusCode >= 300
+          ) {
+            // Only the authenticated (Bearer) 2xx subscriptions request is the
+            // real target; ignore bare 401s / unrelated completions.
+            return;
+          }
+          // ChatGPT subscription verification has a single target request
+          // (the /backend-api/subscriptions call). The legacy conversation
+          // fetch (extraRequestFn) that used to set RequestsHasCompleted is
+          // not part of this flow, so mark completion here directly — the
+          // readiness gate requires RequestsHasCompleted for dataSource chatgpt.
+          RequestsHasCompleted = true;
           console.log('onCompletedFn', dataSource, details);
           // chatgpt has only one requestUrl
           // await extraRequestFn();// For simplified version comments
@@ -1640,6 +1718,13 @@ export const pageDecodeMsgListener = async (
 
           await formatAlgorithmParamsFn();
           console.log('RequestsHasCompleted=', RequestsHasCompleted);
+          // Two-stage flow: preAlgorithmFn runs the offline pre-generation
+          // (isUserClick:false); when it reaches RUNNING_PAUSE it sets
+          // preAlgorithmStatus='1', which the readiness gate below waits on
+          // before startPageDecodeAttestationFn fires the online run
+          // (isUserClick:true). This serialization is required for chatgpt:
+          // single-stage online-only never completes (times out even at 8min),
+          // and firing both concurrently collides ("can not re-run online").
           preAlgorithmFn();
           checkWebRequestIsReadyFn();
         }
@@ -1656,9 +1741,16 @@ export const pageDecodeMsgListener = async (
         ['requestBody']
       );
 
+      // interceptorUrlArr entries can be REGX template expressions (e.g. the
+      // ChatGPT subscriptions URL `...subscriptions\?account_id=[0-9a-f-]{36}...`),
+      // which are NOT valid chrome.webRequest match patterns, so onCompleted
+      // silently never fires for them -> RequestsHasCompleted / preAlgorithm
+      // never advance -> readiness never met -> 00013. Listen on <all_urls>
+      // (symmetric with onBeforeSendHeaders above); onCompletedFn already
+      // filters internally by tabId + dataSource + requestsMap membership.
       chrome.webRequest.onCompleted.addListener(
         onCompletedFn,
-        { urls: interceptorUrlArr, types: ['xmlhttprequest', 'main_frame'] },
+        { urls: ['<all_urls>'], types: ['xmlhttprequest', 'main_frame'] },
         ['responseHeaders', 'extraHeaders']
       );
 
@@ -1696,6 +1788,25 @@ export const pageDecodeMsgListener = async (
           files: ['static/css/pageDecode.css'],
         });
       };
+      const clearDataSourcePageSessionFn = async () => {
+        await chrome.scripting.executeScript({
+          target: {
+            tabId: dataSourcePageTabId,
+          },
+          func: () => {
+            [
+              'padoAttestRequestStatus',
+              'padoAttestRequestReady',
+              'padoAttestRequestErrorTxt',
+              'padoAttestRequestResultStatus',
+              'primusUIStep',
+            ].forEach((key) => sessionStorage.removeItem(key));
+            document
+              .querySelectorAll('#pado-extension-content')
+              .forEach((element) => element.remove());
+          },
+        });
+      };
       const triggerExistingDataSourceRequestsFn = async () => {
         const targetUrlExpressions = requests
           .filter((r) => r.name !== 'first')
@@ -1704,12 +1815,14 @@ export const pageDecodeMsgListener = async (
         if (!targetUrlExpressions.length) {
           return;
         }
+        const isChatgptDataSource =
+          String(activeTemplate?.dataSource || '').toLowerCase() === 'chatgpt';
         await chrome.scripting.executeScript({
           target: {
             tabId: dataSourcePageTabId,
           },
-          args: [targetUrlExpressions],
-          func: async (expressions) => {
+          args: [targetUrlExpressions, isChatgptDataSource],
+          func: async (expressions, isChatgpt) => {
             const normalizeLiteralUrl = (expression) => {
               let value = String(expression || '').trim();
               value = value.replace(/\(\?:\\\?\.\*\)\?\$$/, '');
@@ -1735,12 +1848,11 @@ export const pageDecodeMsgListener = async (
                 return url === expression || url.startsWith(`${expression}?`);
               }
             };
-            await new Promise((resolve) => setTimeout(resolve, 1500));
             const resources = performance
               .getEntriesByType('resource')
               .map((entry) => entry.name)
               .filter((url) => /^https?:\/\//.test(url));
-            const urls = expressions
+            let urls = expressions
               .map((expression) => {
                 const literalUrl = normalizeLiteralUrl(expression);
                 if (literalUrl) {
@@ -1751,6 +1863,78 @@ export const pageDecodeMsgListener = async (
                   .find((url) => matchesExpression(url, expression));
               })
               .filter((url, index, arr) => url && arr.indexOf(url) === index);
+
+            if (isChatgpt) {
+              try {
+                let subscriptionUrls = resources
+                  .filter((url) =>
+                    /\/backend-api\/subscriptions\?account_id=/.test(url)
+                  )
+                  .filter((url) =>
+                    expressions.some((expression) =>
+                      matchesExpression(url, expression)
+                    )
+                  )
+                  .filter((url, index, arr) => arr.indexOf(url) === index);
+                const sessionResponse = await fetch('/api/auth/session', {
+                  credentials: 'include',
+                  cache: 'no-store',
+                });
+                const session = sessionResponse.ok
+                  ? await sessionResponse.json()
+                  : undefined;
+                const accessToken = session?.accessToken;
+                if (typeof accessToken === 'string' && accessToken.length > 0) {
+                  const authHeader = { authorization: `Bearer ${accessToken}` };
+                  if (subscriptionUrls.length === 0) {
+                    const accountsResponse = await fetch(
+                      '/backend-api/accounts/check/v4-2023-04-27',
+                      {
+                        credentials: 'include',
+                        headers: authHeader,
+                        cache: 'no-store',
+                      }
+                    );
+                    const accounts = accountsResponse.ok
+                      ? await accountsResponse.json()
+                      : {};
+                    const accountId =
+                      accounts.account_ordering?.[0] ||
+                      Object.values(accounts.accounts || {})
+                        .map((entry) => entry?.account?.account_id)
+                        .find((id) => typeof id === 'string' && id.length > 0);
+                    if (accountId) {
+                      subscriptionUrls = [
+                        `https://chatgpt.com/backend-api/subscriptions?account_id=${accountId}`,
+                      ];
+                    }
+                  }
+                  for (const url of subscriptionUrls) {
+                    await fetch(url, {
+                      credentials: 'include',
+                      headers: authHeader,
+                      cache: 'no-store',
+                    });
+                    console.log(
+                      '[kaito-attest] triggered ChatGPT subscriptions request (pageDecode bearer fast-path)',
+                      url
+                    );
+                  }
+                } else {
+                  console.log(
+                    '[kaito-attest] ChatGPT access token unavailable in pageDecode trigger'
+                  );
+                }
+              } catch (error) {
+                console.log(
+                  '[kaito-attest] ChatGPT pageDecode trigger error',
+                  error
+                );
+              }
+              return;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 1500));
             for (const url of urls) {
               try {
                 await fetch(url, {
@@ -1791,8 +1975,9 @@ export const pageDecodeMsgListener = async (
         }
       });
       if (reloadExistingDataSourcePage) {
-        await injectFn();
+        await clearDataSourcePageSessionFn();
         await triggerExistingDataSourceRequestsFn();
+        await injectFn();
       } else {
         await injectFn();
       }
