@@ -2124,6 +2124,7 @@ export const pageDecodeMsgListener = async (
                 return url === expression || url.startsWith(`${expression}?`);
               }
             };
+            await new Promise((resolve) => setTimeout(resolve, 1500));
             const resources = performance
               .getEntriesByType('resource')
               .map((entry) => entry.name)
@@ -2211,7 +2212,6 @@ export const pageDecodeMsgListener = async (
               return;
             }
 
-            await new Promise((resolve) => setTimeout(resolve, 1500));
             for (const url of urls) {
               // Cookies first (session-scoped endpoints need them); on failure
               // retry without. Public endpoints that reply Access-Control-Allow-
