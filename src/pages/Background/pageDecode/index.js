@@ -1854,13 +1854,14 @@ export const pageDecodeMsgListener = async (
               .filter((url) => /^https?:\/\//.test(url));
             let urls = expressions
               .map((expression) => {
-                const literalUrl = normalizeLiteralUrl(expression);
-                if (literalUrl) {
-                  return literalUrl;
-                }
-                return [...resources]
+                // Prefer the actual URL the page already fetched (resource
+                // timing): it carries required query params (e.g. Lighter's
+                // ?by=&value=) that normalizeLiteralUrl strips off the regex,
+                // leaving a bare URL the endpoint rejects. Fall back to literal.
+                const matchedUrl = [...resources]
                   .reverse()
                   .find((url) => matchesExpression(url, expression));
+                return matchedUrl || normalizeLiteralUrl(expression);
               })
               .filter((url, index, arr) => url && arr.indexOf(url) === index);
 
@@ -1936,12 +1937,26 @@ export const pageDecodeMsgListener = async (
 
             await new Promise((resolve) => setTimeout(resolve, 1500));
             for (const url of urls) {
-              try {
-                await fetch(url, {
-                  credentials: 'include',
-                  cache: 'no-store',
-                });
-              } catch {}
+              // Cookies first (session-scoped endpoints need them); on failure
+              // retry without. Public endpoints that reply Access-Control-Allow-
+              // Origin: * (e.g. Lighter) reject a credentialed cross-origin fetch,
+              // so credentials:'include' fails even though the data is public.
+              for (const credentials of ['include', 'omit']) {
+                try {
+                  const response = await fetch(url, {
+                    credentials,
+                    cache: 'no-store',
+                  });
+                  if (response.ok) {
+                    console.log(
+                      '[kaito-attest] pageDecode triggered target request',
+                      url,
+                      credentials
+                    );
+                    break;
+                  }
+                } catch {}
+              }
             }
           },
         });
