@@ -167,6 +167,9 @@ const redactRequestsMapForKaitoDebug = () =>
           method: value?.method,
           type: value?.type,
           isTarget: value?.isTarget,
+          hasHeaders: Object.keys(headers).length > 0,
+          headerKeys: Object.keys(headers),
+          hasCookie: !!headers.Cookie || !!headers.cookie,
           hasAuthorization: !!headers.Authorization || !!headers.authorization,
           statusCode: value?.statusCode,
         },
@@ -909,6 +912,14 @@ export const pageDecodeMsgListener = async (
               }
               let matchRequestUrlResult;
               let isTargetUrl = false;
+              if (getActiveTemplateDataSource() === 'claude') {
+                // Claude.ai API calls are Cloudflare-gated when replayed from the
+                // extension background, even with captured cookies. The page's own
+                // XHR is the verifiable traffic; do not block readiness on a
+                // background preflight that cannot reproduce the page context.
+                storeRequestsMap(matchRequestId, { isTarget: 1 });
+                break;
+              }
               if (requestsMap[matchRequestId].type === 'main_frame') {
                 matchRequestUrlResult = await extraRequestHtmlFn({
                   ...requestsMap[matchRequestId],
@@ -1622,6 +1633,8 @@ export const pageDecodeMsgListener = async (
             url: request.url,
             method: request.method,
             hasHeaders: !!request.headers,
+            headerKeys: Object.keys(request.headers || {}),
+            hasCookie: !!request.headers?.Cookie || !!request.headers?.cookie,
             hasAuthorization:
               !!request.headers?.Authorization || !!request.headers?.authorization,
             targetRequestId: request.targetRequestId,
