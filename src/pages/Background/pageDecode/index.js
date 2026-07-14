@@ -263,23 +263,37 @@ const getChatGptAuthorizationHeader = () => {
   const headers = authedRequest?.headers || {};
   return headers.Authorization || headers.authorization || '';
 };
-const getChatGptHeaderFallback = () => {
-  if (getActiveTemplateDataSource() !== 'chatgpt') {
-    return {};
-  }
+	const getChatGptHeaderFallback = () => {
+		if (getActiveTemplateDataSource() !== 'chatgpt') {
+			return {};
+		}
   const authedRequests = Object.values(requestsMap).filter((requestInfo) => {
     const headers = requestInfo?.headers || {};
     return !!headers.Authorization || !!headers.authorization;
   });
   const requestWithMostHeaders = authedRequests.sort((left, right) => {
     return Object.keys(right?.headers || {}).length - Object.keys(left?.headers || {}).length;
-  })[0];
-  return { ...(requestWithMostHeaders?.headers || {}) };
-};
-const readChatGptAuthorizationHeaderFromSession = async () => {
-  if (chatgptAuthorizationHeader) {
-    return chatgptAuthorizationHeader;
-  }
+		})[0];
+		return { ...(requestWithMostHeaders?.headers || {}) };
+	};
+	const readChatGptCookieHeader = async () => {
+		try {
+			if (!chrome.cookies?.getAll) {
+				return '';
+			}
+			const cookies = await chrome.cookies.getAll({ url: 'https://chatgpt.com/' });
+			return cookies
+				.filter((cookie) => cookie?.name)
+				.map((cookie) => `${cookie.name}=${cookie.value || ''}`)
+				.join('; ');
+		} catch (error) {
+			return '';
+		}
+	};
+	const readChatGptAuthorizationHeaderFromSession = async () => {
+		if (chatgptAuthorizationHeader) {
+			return chatgptAuthorizationHeader;
+		}
   const storageArea = chrome.storage?.session || chrome.storage?.local;
   const sessionObj = await storageArea
     .get([CHATGPT_AUTH_HEADER_SESSION_KEY])
@@ -313,8 +327,6 @@ const requestInfoMatchesTemplateRequest = (requestInfo, templateRequest) => {
     return false;
   }
   return (
-    (requestInfo.url.includes('/backend-api/accounts/check/') &&
-      templateRequest.url.includes('/backend-api/accounts/check/')) ||
     (requestInfo.url.includes('/backend-api/subscriptions?') &&
       templateRequest.url.includes('/backend-api/subscriptions')) ||
     (requestInfo.url.includes('/backend-api/wham/usage') &&
@@ -340,14 +352,28 @@ const hydrateMissingChatGptRequestsFromTrace = async (requests) => {
     hydrated: [],
     skipped: [],
   };
-  if (!authorizationHeader) {
-    await chrome.storage.local.set({ kaitoChatGptHydrationDebug: hydrationDebug });
-    return;
-  }
-  const { kaitoChatGptRequestDebug = [] } = await chrome.storage.local.get([
-    'kaitoChatGptRequestDebug',
-  ]);
-  const trace = [...kaitoChatGptRequestDebug].reverse();
+	  if (!authorizationHeader) {
+	    await chrome.storage.local.set({ kaitoChatGptHydrationDebug: hydrationDebug });
+	    return;
+	  }
+	  const cookieHeader = await readChatGptCookieHeader();
+	  hydrationDebug.cookiePresent = !!cookieHeader;
+	  const fallbackHeaders = {
+	    ...getChatGptHeaderFallback(),
+	    Authorization: authorizationHeader,
+	    ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+	  };
+	  const { kaitoChatGptRequestDebug = [] } = await chrome.storage.local.get([
+	    'kaitoChatGptRequestDebug',
+	  ]);
+	  const storageArea = chrome.storage?.session || chrome.storage?.local;
+	  const { kaitoChatGptRequestTrace = [] } = await storageArea
+	    .get(['kaitoChatGptRequestTrace'])
+	    .catch(() => ({}));
+	  const now = Date.now();
+	  const trace = [...kaitoChatGptRequestDebug, ...kaitoChatGptRequestTrace]
+	    .filter((entry) => !entry?.at || now - entry.at < 10 * 60 * 1000)
+	    .reverse();
   hydrationDebug.traceCount = trace.length;
   for (const request of requests) {
     if (!request?.url || request.name === 'first') {
@@ -356,18 +382,22 @@ const hydrateMissingChatGptRequestsFromTrace = async (requests) => {
     const alreadyCapturedKey = Object.keys(requestsMap).find(
       (key) => requestsMap[key]?.templateRequestUrl === request.url
     );
-    if (alreadyCapturedKey) {
-      const headers = requestsMap[alreadyCapturedKey]?.headers || {};
-      storeRequestsMap(alreadyCapturedKey, {
-        headers: {
-          ...headers,
-          Authorization:
-            headers.Authorization ||
-            headers.authorization ||
-            authorizationHeader,
-        },
-        isTarget: 1,
-      });
+	    if (alreadyCapturedKey) {
+	      const headers = requestsMap[alreadyCapturedKey]?.headers || {};
+	      storeRequestsMap(alreadyCapturedKey, {
+	        headers: {
+	          ...fallbackHeaders,
+	          ...headers,
+	          Authorization:
+	            headers.Authorization ||
+	            headers.authorization ||
+	            authorizationHeader,
+	          ...(headers.Cookie || headers.cookie || !cookieHeader
+	            ? {}
+	            : { Cookie: cookieHeader }),
+	        },
+	        isTarget: 1,
+	      });
       hydrationDebug.hydrated.push({
         templateRequestUrl: request.url,
         url: requestsMap[alreadyCapturedKey]?.url,
@@ -388,23 +418,33 @@ const hydrateMissingChatGptRequestsFromTrace = async (requests) => {
       });
       return (
         checkRes ||
-        (requestUrl.includes('/backend-api/accounts/check/') &&
-          request.url.includes('/backend-api/accounts/check/')) ||
         (requestUrl.includes('/backend-api/subscriptions?') &&
           request.url.includes('/backend-api/subscriptions')) ||
         (requestUrl.includes('/backend-api/wham/usage') &&
           request.url.includes('/backend-api/wham/usage'))
       );
     });
-    if (!traceEntry?.url) {
-      hydrationDebug.skipped.push({ url: request.url, reason: 'trace_missing' });
-      continue;
-    }
-    const requestId = `kaito-chatgpt-hydrated-${request.name || request.url}`;
-    storeRequestsMap(requestId, {
-      headers: { Authorization: authorizationHeader },
-      method: request.method || 'GET',
-      url: traceEntry.url,
+	    if (!traceEntry?.url) {
+	      hydrationDebug.skipped.push({ url: request.url, reason: 'trace_missing' });
+	      continue;
+	    }
+	    const traceHeaders = traceEntry.headers || {};
+	    const chatGptHeaders = {
+	      ...fallbackHeaders,
+	      ...traceHeaders,
+	      Authorization:
+	        traceHeaders.Authorization ||
+	        traceHeaders.authorization ||
+	        authorizationHeader,
+	      ...(traceHeaders.Cookie || traceHeaders.cookie || !cookieHeader
+	        ? {}
+	        : { Cookie: cookieHeader }),
+	    };
+	    const requestId = `kaito-chatgpt-hydrated-${request.name || request.url}`;
+	    storeRequestsMap(requestId, {
+	      headers: chatGptHeaders,
+	      method: request.method || 'GET',
+	      url: traceEntry.url,
       requestId,
       templateRequestUrl: request.url,
       type: 'xmlhttprequest',
@@ -1618,7 +1658,7 @@ export const pageDecodeMsgListener = async (
         beginAttest: '1',
       });
       let aligorithmParams = Object.assign(
-        { isUserClick: 'true' },
+        { isUserClick: 'true', kaitoStartedAt: Date.now() },
         formatAlgorithmParams
       );
       await chrome.storage.local.set({
@@ -1919,8 +1959,6 @@ export const pageDecodeMsgListener = async (
               return false;
             }
             return (
-              (currRequestUrl.includes('/backend-api/accounts/check/') &&
-                r.url.includes('/backend-api/accounts/check/')) ||
               (currRequestUrl.includes('/backend-api/subscriptions?') &&
                 r.url.includes('/backend-api/subscriptions')) ||
               (currRequestUrl.includes('/backend-api/wham/usage') &&

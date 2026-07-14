@@ -17,20 +17,20 @@ console.log('222CURENV', CURENV, process.env);
 const PADOURLMAP = {
   development: 'wss://api-dev.padolabs.org/algorithm',
   test: '18.179.8.186:8888',
-  production: 'wss://api.padolabs.org/algorithm',
+  production: 'wss://api2.padolabs.org/algorithm',
 };
 export let PADOURL = PADOURLMAP[CURENV];
 
 const ZKPADOURLMAP = {
   development: 'wss://api-dev.padolabs.org/algorithm-proxy',
-  production: 'wss://api.padolabs.org/algorithm-proxy',
+  production: 'wss://api2.padolabs.org/algorithm-proxy',
 };
 export let ZKPADOURL = ZKPADOURLMAP[CURENV];
 
 const PROXYURLMAP = {
   development: 'wss://api-dev.padolabs.org/algoproxy',
   test: '18.179.8.186:9000',
-  production: 'wss://api.padolabs.org/algoproxy',
+  production: 'wss://api2.padolabs.org/algoproxy',
 };
 export let PROXYURL = PROXYURLMAP[CURENV];
 

@@ -244,7 +244,34 @@ const processAlgorithmReq = async (message, port) => {
         attestationParams.source === 'binance' &&
         process.env.NODE_ENV === 'production'
       ) {
-        attestationParams.proxyUrl = 'wss://api.padolabs.org/algoproxy';
+        attestationParams.proxyUrl = 'wss://api2.padolabs.org/algoproxy';
+      }
+      try {
+        const appSignParameters =
+          attestationParams?.appParameters?.appSignParameters
+            ? JSON.parse(attestationParams.appParameters.appSignParameters)
+            : undefined;
+        await chrome.storage.local.set({
+          kaitoPrimusAlgorithmParamsDebug: {
+            source: attestationParams.source,
+            requestid: attestationParams.requestid,
+            modelType: attestationParams.modelType,
+            padoUrl: attestationParams.padoUrl,
+            proxyUrl: attestationParams.proxyUrl,
+            credVersion: attestationParams.credVersion,
+            appId: appSignParameters?.appId,
+            attTemplateID: appSignParameters?.attTemplateID,
+            userAddress: appSignParameters?.userAddress,
+            appSignParametersLength:
+              attestationParams.appParameters.appSignParameters.length,
+            appSignaturePrefix:
+              attestationParams.appParameters.appSignature?.slice?.(0, 12),
+            additionParams: appSignParameters?.additionParams,
+            at: Date.now(),
+          },
+        });
+      } catch (error) {
+        console.log('kaito debug params failed', error);
       }
       console.log('attestationParams=', attestationParams);
       chrome.runtime.sendMessage({

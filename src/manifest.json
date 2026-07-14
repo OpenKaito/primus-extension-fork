@@ -17,6 +17,7 @@
     "unlimitedStorage",
     "offscreen",
     "webRequest",
+    "cookies",
     "scripting"
   ],
   "host_permissions": ["<all_urls>"],
