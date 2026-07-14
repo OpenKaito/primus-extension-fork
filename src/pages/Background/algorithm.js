@@ -476,6 +476,18 @@ export const algorithmMsgListener = async (
           const {
             errlog: { code, desc },
           } = details;
+          await chrome.storage.local.set({
+            kaitoLastAttestationErrorDebug: {
+              at: Date.now(),
+              retcode,
+              retdesc,
+              errlog: details?.errlog,
+              isUserClick,
+              requestid: parsedActiveRequestAttestation?.requestid,
+              source: parsedActiveRequestAttestation?.source,
+              templateId: parsedActiveRequestAttestation?.templateId,
+            },
+          });
           processAlgorithmReq({ reqMethodName: 'stop' });
           var eventInfoMsg = 'Something went wrong';
           let title = errorMsgTitle;
