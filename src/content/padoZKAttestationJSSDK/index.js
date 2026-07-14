@@ -1,6 +1,6 @@
 window.addEventListener('message', (e) => {
   const { target, name, params } = e.data;
-  if (target === 'padoExtension') {
+  if (target === 'padoExtension' || target === 'kaitoPadoExtension') {
     // console.log('333pado-content-sdk-listen-message', e.data);
     if (name === 'initAttestation') {
       chrome.runtime.sendMessage({

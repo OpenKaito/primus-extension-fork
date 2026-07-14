@@ -153,6 +153,20 @@ export const padoZKAttestationJSSDKMsgListener = async (
       'padoZKAttestationJSSDKDappTabId',
     ]);
     if (lastActiveRequestAttestationStr) {
+      let staleActiveRequest = false;
+      try {
+        const lastActiveRequest = JSON.parse(lastActiveRequestAttestationStr);
+        const startedAt = Number(lastActiveRequest?.kaitoStartedAt || 0);
+        staleActiveRequest = !startedAt || Date.now() - startedAt > 2 * 60 * 1000;
+      } catch (error) {
+        staleActiveRequest = true;
+      }
+      if (staleActiveRequest) {
+        await chrome.storage.local.remove([
+          'activeRequestAttestation',
+          'padoZKAttestationJSSDKBeginAttest',
+        ]);
+      } else {
       await chrome.storage.local.remove(['padoZKAttestationJSSDKBeginAttest']);
       const desc =
         'An attestation process is currently being generated. Please try again later.';
@@ -170,6 +184,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
         params: resParams,
       });
       return;
+      }
     }
     let activeWebProofTemplate = {};
     let activeAttestationParams = {};
@@ -228,8 +243,12 @@ export const padoZKAttestationJSSDKMsgListener = async (
       walletAddress = userAddress;
 
       try {
-        const { rc, result } = await queryTemplateById(attTemplateID);
-        if (rc === 0 && result) {
+        const kaitoTemplate = params.kaitoTemplate;
+        const { rc, result } = kaitoTemplate
+          ? { rc: 0, result: kaitoTemplate }
+          : await queryTemplateById(attTemplateID);
+        const templateResult = result;
+        if (rc === 0 && templateResult) {
           const {
             id,
             name,
@@ -239,7 +258,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
             dataPageTemplate,
             dataSourceTemplate,
             sslCipherSuite,
-          } = result;
+          } = templateResult;
 
           const dataSourceTemplateObj = JSON.parse(dataSourceTemplate);
           let jumpTo = JSON.parse(dataPageTemplate).baseUrl;
