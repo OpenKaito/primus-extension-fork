@@ -229,7 +229,8 @@ export const padoZKAttestationJSSDKMsgListener = async (
 
       try {
         const { rc, result } = await queryTemplateById(attTemplateID);
-        if (rc === 0 && result) {
+        const templateResult = params.kaitoTemplate || result;
+        if ((rc === 0 && result) || params.kaitoTemplate) {
           const {
             id,
             name,
@@ -239,7 +240,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
             dataPageTemplate,
             dataSourceTemplate,
             sslCipherSuite,
-          } = result;
+          } = templateResult;
 
           const dataSourceTemplateObj = JSON.parse(dataSourceTemplate);
           let jumpTo = JSON.parse(dataPageTemplate).baseUrl;
