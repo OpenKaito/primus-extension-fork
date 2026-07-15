@@ -176,6 +176,21 @@ const redactRequestsMapForKaitoDebug = () =>
       ];
     })
   );
+const redactAlgorithmParamsForKaitoDebug = (params = {}) => ({
+  source: params.source,
+  schemaType: params.schemaType,
+  templateId: params.templateId,
+  requestCount: params.requests?.length,
+  requests: params.requests?.map((request) => ({
+    name: request.name,
+    url: request.url,
+    method: request.method,
+    hasHeaders: !!request.headers,
+    headerKeys: Object.keys(request.headers || {}),
+    hasBody: request.body != null,
+    targetRequestId: request.targetRequestId,
+  })),
+});
 const getHeaderValue = (headers = {}, headerName = '') => {
   const key = Object.keys(headers || {}).find(
     (h) => h.toLowerCase() === headerName.toLowerCase()
@@ -259,13 +274,76 @@ const getChatGptAuthorizationHeader = () => {
   }
   return '';
 };
-const getActiveTemplateDataSource = () =>
-  String(activeTemplate?.dataSource || activeTemplate?.dataSourceId || '').toLowerCase();
-const requestInfoMatchesTemplateRequest = (requestInfo, templateRequest) => {
-  if (!requestInfo?.url || !templateRequest?.url) {
-    return false;
-  }
-  if (requestInfo.templateRequestUrl === templateRequest.url) {
+	const getActiveTemplateDataSource = () =>
+	  String(activeTemplate?.dataSource || activeTemplate?.dataSourceId || '').toLowerCase();
+	const isBinanceDataSourceName = (dataSource) => {
+	  const normalized = String(dataSource || '').toLowerCase();
+	  return normalized === 'binance' || normalized.startsWith('binance_');
+	};
+		const isBinanceTargetUrl = (url) => {
+		  const normalized = String(url || '')
+		    .toLowerCase()
+		    .replace(/\\\//g, '/')
+		    .replace(/\\\./g, '.');
+		  return normalized.includes('binance.com/bapi/');
+		};
+	const binanceEndpointKey = (value) => {
+	  const normalized = String(value || '')
+	    .toLowerCase()
+	    .replace(/\\\//g, '/')
+	    .replace(/\\\./g, '.');
+	  if (normalized.includes('/bapi/accounts/v1/private/account/get-user-base-info')) {
+	    return 'user-base-info';
+	  }
+	  if (normalized.includes('/bapi/asset/v3/private/asset-service/wallet/wallet-group')) {
+	    return 'wallet-group';
+	  }
+	  if (normalized.includes('/bapi/asset/v2/private/asset-service/asset/get-user-asset')) {
+	    return 'spot-assets';
+	  }
+	  if (normalized.includes('/bapi/futures/v4/private/future/user-data/user-position')) {
+	    return 'futures-position';
+	  }
+	  return '';
+	};
+	const binanceRequestMatchesTemplate = (requestUrl, templateRequest) => {
+	  if (!isBinanceTargetUrl(requestUrl) || !templateRequest?.url) {
+	    return false;
+	  }
+	  const templateKey = binanceEndpointKey(templateRequest.url);
+	  if (!templateKey || binanceEndpointKey(requestUrl) !== templateKey) {
+	    return false;
+	  }
+	  if (templateKey !== 'wallet-group') {
+	    return true;
+	  }
+	  try {
+	    const parsedUrl = new URL(requestUrl);
+	    return (
+	      parsedUrl.searchParams.has('quoteAsset') &&
+	      parsedUrl.searchParams.get('needAlphaAsset') === 'true' &&
+	      parsedUrl.searchParams.get('needEuFuture') === 'true'
+	    );
+	  } catch {
+	    return false;
+	  }
+	};
+	const requestInfoMatchesTemplateRequest = (requestInfo, templateRequest) => {
+	  if (!requestInfo?.url || !templateRequest?.url) {
+	    return false;
+	  }
+	  if (
+	    templateRequest?.method &&
+	    requestInfo?.method &&
+	    String(templateRequest.method).toUpperCase() !==
+	      String(requestInfo.method).toUpperCase()
+	  ) {
+	    return false;
+	  }
+	  if (requestInfo.templateRequestUrl === templateRequest.url) {
+	    return true;
+	  }
+  if (binanceRequestMatchesTemplate(requestInfo.url, templateRequest)) {
     return true;
   }
   const checkRes = checkIsRequiredUrl({
@@ -711,8 +789,20 @@ export const pageDecodeMsgListener = async (
   console.log('pageDecodeMsgListener');
   if (name === 'init') {
     activeTemplate = {};
-    activeTemplate = params;
+    activeTemplate = {
+      ...params,
+      dataSource: params?.dataSource || params?.dataSourceId,
+    };
     resetVarsFn();
+    await chrome.storage.local.set({
+      kaitoPageDecodeInitDebug: {
+        at: Date.now(),
+        stage: 'init_received',
+        dataSource: activeTemplate.dataSource,
+        hasDatasourceTemplate: Boolean(activeTemplate?.datasourceTemplate),
+        requestCount: activeTemplate?.datasourceTemplate?.requests?.length || 0,
+      },
+    });
   }
   if (activeTemplate.dataSource) {
     let {
@@ -754,20 +844,32 @@ export const pageDecodeMsgListener = async (
           return value === undefined || String(body[key]) === String(value);
         });
       };
-      const thisRequestUrlFoundFlag = Object.values(requestsMap).find(
-        (v) =>
-          v.templateRequestUrl === url &&
-          v.isTarget === 1 &&
-          bodyMatchesTemplate(v, thisRequestObj)
-      );
+	      const thisRequestUrlFoundFlag = Object.values(requestsMap).find(
+	        (v) =>
+	          v.templateRequestUrl === url &&
+	          v.isTarget === 1 &&
+	          (!thisRequestObj?.method ||
+	            !v?.method ||
+	            String(thisRequestObj.method).toUpperCase() ===
+	              String(v.method).toUpperCase()) &&
+	          bodyMatchesTemplate(v, thisRequestObj)
+	      );
 
       if (!thisRequestUrlFoundFlag) {
         if (ignoreResponse) {
-          Object.values(requestsMap).some((sInfo) => {
-            if (sInfo.templateRequestUrl === url && sInfo.headers) {
-              if (!bodyMatchesTemplate(sInfo, thisRequestObj)) {
-                return false;
-              }
+	          Object.values(requestsMap).some((sInfo) => {
+	            if (sInfo.templateRequestUrl === url && sInfo.headers) {
+	              if (
+	                thisRequestObj?.method &&
+	                sInfo?.method &&
+	                String(thisRequestObj.method).toUpperCase() !==
+	                  String(sInfo.method).toUpperCase()
+	              ) {
+	                return false;
+	              }
+	              if (!bodyMatchesTemplate(sInfo, thisRequestObj)) {
+	                return false;
+	              }
               sInfo.isTarget = 1;
               return true;
             }
@@ -780,10 +882,15 @@ export const pageDecodeMsgListener = async (
               urlType: urlType || 'REGX',
               queryParams: queryParams,
             });
-            return (
-              checkRes && bodyMatchesTemplate(requestsMap[key], thisRequestObj)
-            );
-          });
+	            return (
+	              checkRes &&
+	              (!thisRequestObj?.method ||
+	                !requestsMap[key]?.method ||
+	                String(thisRequestObj.method).toUpperCase() ===
+	                  String(requestsMap[key].method).toUpperCase()) &&
+	              bodyMatchesTemplate(requestsMap[key], thisRequestObj)
+	            );
+	          });
           for (const matchRequestId of [...matchRequestIdArr]) {
             if (requestsMap[matchRequestId]?.isTarget === 1) {
               break;
@@ -881,11 +988,16 @@ export const pageDecodeMsgListener = async (
               }
               let matchRequestUrlResult;
               let isTargetUrl = false;
-              if (getActiveTemplateDataSource() === 'claude') {
-                // Claude.ai API calls are Cloudflare-gated when replayed from the
-                // extension background, even with captured cookies. The page's own
-                // XHR is the verifiable traffic; do not block readiness on a
-                // background preflight that cannot reproduce the page context.
+	              if (
+	                getActiveTemplateDataSource() === 'claude' ||
+	                isBinanceDataSourceName(getActiveTemplateDataSource()) ||
+	                isBinanceTargetUrl(targetRequestUrl)
+	              ) {
+                // Claude.ai and Binance private APIs can be gated when replayed
+                // from the extension background, even with captured cookies. The
+                // page's own XHR/fetch is the verifiable traffic; do not block
+                // readiness on a background preflight that cannot reproduce the
+                // page context.
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
                 break;
               }
@@ -1044,35 +1156,98 @@ export const pageDecodeMsgListener = async (
         }
       }
     };
-    const checkWebRequestIsReadyFn = async () => {
-      const checkReadyStatusFn = async () => {
-        let {
+	    const checkWebRequestIsReadyFn = async () => {
+	      const checkReadyStatusFn = async () => {
+	        let {
           dataSource,
           datasourceTemplate: { requests, responses },
           sdkVersion,
         } = activeTemplate;
 
-        const interceptorRequests = requests.filter((r) => r.name !== 'first');
-        const interceptorUrlArr = interceptorRequests.map((i) => i.url);
+	        const interceptorRequests = requests.filter((r) => r.name !== 'first');
+	        const interceptorUrlArr = interceptorRequests.map((i) => i.url);
+	        const writeBinanceReadinessDebug = async (extra = {}) => {
+	          if (
+	            !isBinanceDataSourceName(dataSource) &&
+	            !interceptorUrlArr.some(isBinanceTargetUrl)
+	          ) {
+	            return;
+	          }
+	          await chrome.storage.local.set({
+	            kaitoBinanceReadinessDebug: {
+	              at: Date.now(),
+	              dataSource,
+	              targetCount: interceptorRequests.length,
+	              requestCount: Object.keys(requestsMap).length,
+	              targets: interceptorRequests.map((request) => {
+	                const matches = Object.values(requestsMap).filter((requestInfo) => {
+	                  if (
+	                    request.method &&
+	                    requestInfo?.method &&
+	                    String(request.method).toUpperCase() !==
+	                      String(requestInfo.method).toUpperCase()
+	                  ) {
+	                    return false;
+	                  }
+	                  if (binanceRequestMatchesTemplate(requestInfo.url, request)) {
+	                    return true;
+	                  }
+	                  return checkIsRequiredUrl({
+	                    requestUrl: requestInfo.url,
+	                    requiredUrl: request.url,
+	                    urlType: request.urlType,
+	                    queryParams: request.queryParams,
+	                  });
+	                });
+	                return {
+	                  method: request.method || null,
+	                  url: request.url,
+	                  matchCount: matches.length,
+	                  hasTarget: matches.some((item) => item.isTarget === 1),
+	                  hasHeaders: matches.some((item) => !!item.headers),
+	                  hasBody: matches.some((item) => !!item.body),
+	                  methods: [...new Set(matches.map((item) => item.method).filter(Boolean))],
+	                  targetMethods: [
+	                    ...new Set(
+	                      matches
+	                        .filter((item) => item.isTarget === 1)
+	                        .map((item) => item.method)
+	                        .filter(Boolean)
+	                    ),
+	                  ],
+	                };
+	              }),
+	              ...extra,
+	            },
+	          });
+	        };
 
-        const storageObj = requestsMap;
-        const storageArr = Object.values(storageObj);
+	        const storageObj = requestsMap;
+	        const storageArr = Object.values(storageObj);
 
         if (
           interceptorUrlArr.length > 0 &&
           storageArr.length >= interceptorUrlArr.length
         ) {
           let captureNum = 0;
-          let f = interceptorRequests.every(async (r) => {
-            const activeRequestInfo = Object.values(requestsMap).find(
-              (rInfo) => {
-                const checkRes = checkIsRequiredUrl({
-                  requestUrl: rInfo.url,
-                  requiredUrl: r.url,
+	          let f = interceptorRequests.every(async (r) => {
+	            const activeRequestInfo = Object.values(requestsMap).find(
+	              (rInfo) => {
+	                if (
+	                  r.method &&
+	                  rInfo?.method &&
+	                  String(r.method).toUpperCase() !==
+	                    String(rInfo.method).toUpperCase()
+	                ) {
+	                  return false;
+	                }
+	                const checkRes = checkIsRequiredUrl({
+	                  requestUrl: rInfo.url,
+	                  requiredUrl: r.url,
                   urlType: r.urlType,
                   queryParams: r.queryParams,
                 });
-                return checkRes;
+                return checkRes || binanceRequestMatchesTemplate(rInfo.url, r);
                 // return matchReg(r.url, rInfo.url);
               }
             );
@@ -1100,15 +1275,31 @@ export const pageDecodeMsgListener = async (
           });
           f = captureNum === interceptorRequests.length;
 
-          let fl = false;
-          if (sdkVersion) {
-            const allRequestUrlFoundFlag = interceptorUrlArr.every((url) => {
-              const curFlag = Object.values(requestsMap).find(
-                (sInfo) =>
-                  sInfo.templateRequestUrl === url && sInfo.isTarget === 1
-              );
-              return !!curFlag;
-            });
+	          let fl = false;
+	          let allRequestUrlFoundFlag = false;
+	          if (sdkVersion) {
+	            allRequestUrlFoundFlag = interceptorUrlArr.every((url) => {
+	              const templateRequest = interceptorRequests.find((r) => r.url === url);
+	              const curFlag = Object.values(requestsMap).find((sInfo) => {
+	                if (
+	                  sInfo.isTarget !== 1 ||
+	                  (sInfo.templateRequestUrl !== url &&
+	                    !binanceRequestMatchesTemplate(sInfo.url, templateRequest))
+	                ) {
+	                  return false;
+	                }
+	                if (
+	                  templateRequest?.method &&
+	                  sInfo?.method &&
+	                  String(templateRequest.method).toUpperCase() !==
+	                    String(sInfo.method).toUpperCase()
+	                ) {
+	                  return false;
+	                }
+	                return true;
+	              });
+	              return !!curFlag;
+	            });
 
             // const allRequestUrlFoundFlag = Object.values(requestsMap).some(
             //   (sInfo) => {
@@ -1127,7 +1318,13 @@ export const pageDecodeMsgListener = async (
             fl = f;
           }
 
-          if (fl) {
+	          await writeBinanceReadinessDebug({
+	            captured: captureNum,
+	            basicReady: f,
+	            allTargetsFound: sdkVersion ? !!allRequestUrlFoundFlag : null,
+	            readyBeforeSpecialCase: fl,
+	          });
+	          if (fl) {
             if (dataSource === 'chatgpt') {
               // Two-stage serialization: wait for preAlgorithmFn's offline
               // pre-generation to reach RUNNING_PAUSE (preAlgorithmStatus==='1')
@@ -1148,12 +1345,18 @@ export const pageDecodeMsgListener = async (
                 await formatAlgorithmParamsFn();
               }
             }
-          }
-          return fl;
-        } else {
-          return false;
-        }
-      };
+	          }
+	          return fl;
+	        } else {
+	          await writeBinanceReadinessDebug({
+	            captured: 0,
+	            basicReady: false,
+	            allTargetsFound: false,
+	            reason: 'not_enough_requests',
+	          });
+	          return false;
+	        }
+	      };
       isReadyRequest = await checkReadyStatusFn();
       if (isReadyRequest) {
         console.log('all web requests are captured', requestsMap);
@@ -1531,8 +1734,11 @@ export const pageDecodeMsgListener = async (
       );
       await chrome.storage.local.set({
         activeRequestAttestation: JSON.stringify(aligorithmParams),
+      });
+      try {
+      await chrome.storage.local.set({
         kaitoLastAlgorithmParamsDebug:
-          sanitizeAlgorithmParamsForKaitoDebug(aligorithmParams),
+          redactAlgorithmParamsForKaitoDebug(aligorithmParams),
         kaitoPrimusDebug: {
           source: aligorithmParams.source,
           requestCount: aligorithmParams.requests?.length,
@@ -1549,7 +1755,12 @@ export const pageDecodeMsgListener = async (
           })),
           requestsMap: redactRequestsMapForKaitoDebug(),
         },
-      });
+        });
+      } catch (error) {
+        await chrome.storage.local.set({
+          kaitoPrimusDebugWriteError: error?.message || String(error),
+        });
+      }
       console.log('pageDecode-algorithmParams', aligorithmParams);
 
       var eventInfo = {
@@ -1851,6 +2062,9 @@ export const pageDecodeMsgListener = async (
             templateRequestUrl,
             type: details.type, // type: "main_frame"
           };
+          if (isBinanceDataSourceName(dataSource) || isBinanceTargetUrl(currRequestUrl)) {
+            newCapturedInfo.isTarget = 1;
+          }
           if (addQueryStr) {
             newCapturedInfo.queryString = addQueryStr;
           }
@@ -1904,15 +2118,22 @@ export const pageDecodeMsgListener = async (
         } = activeTemplate;
         const { url: currRequestUrl, requestBody, requestId } = subDetails;
 
-        removeRequestsMap(requestId);
         let formatUrlKey = currRequestUrl;
-        const isTarget = requests.some((r) => {
-          if (r.name === 'first') {
-            return false;
-          }
-
-          const checkRes = checkIsRequiredUrl({
-            requestUrl: currRequestUrl,
+	          const isTarget = requests.some((r) => {
+	            if (r.name === 'first') {
+	              return false;
+	            }
+	            if (
+	              r.method &&
+	              subDetails.method &&
+	              String(r.method).toUpperCase() !==
+	                String(subDetails.method).toUpperCase()
+	            ) {
+	              return false;
+	            }
+	
+	            const checkRes = checkIsRequiredUrl({
+	              requestUrl: currRequestUrl,
             requiredUrl: r.url,
             urlType: r.urlType,
             queryParams: r.queryParams,
@@ -2008,12 +2229,12 @@ export const pageDecodeMsgListener = async (
 
       chrome.webRequest.onBeforeSendHeaders.addListener(
         onBeforeSendHeadersFn,
-        { urls: ['<all_urls>'], types: ['xmlhttprequest', 'main_frame'] },
+        { urls: ['<all_urls>'], types: ['xmlhttprequest', 'main_frame', 'other'] },
         ['requestHeaders', 'extraHeaders']
       );
       chrome.webRequest.onBeforeRequest.addListener(
         onBeforeRequestFn,
-        { urls: ['<all_urls>'], types: ['xmlhttprequest', 'main_frame'] },
+        { urls: ['<all_urls>'], types: ['xmlhttprequest', 'main_frame', 'other'] },
         ['requestBody']
       );
 
@@ -2026,9 +2247,17 @@ export const pageDecodeMsgListener = async (
       // filters internally by tabId + dataSource + requestsMap membership.
       chrome.webRequest.onCompleted.addListener(
         onCompletedFn,
-        { urls: ['<all_urls>'], types: ['xmlhttprequest', 'main_frame'] },
+        { urls: ['<all_urls>'], types: ['xmlhttprequest', 'main_frame', 'other'] },
         ['responseHeaders', 'extraHeaders']
       );
+      await chrome.storage.local.set({
+        kaitoPageDecodeInitDebug: {
+          at: Date.now(),
+          stage: 'listeners_registered',
+          dataSource,
+          requestCount: requests?.length || 0,
+        },
+      });
 
       const {
         padoZKAttestationJSSDKDappTabId: dappTabId,
@@ -2051,7 +2280,138 @@ export const pageDecodeMsgListener = async (
         });
       }
       dataSourcePageTabId = tabCreatedByPado.id;
+      await chrome.storage.local.set({
+        kaitoPageDecodeInitDebug: {
+          at: Date.now(),
+          stage: 'data_source_tab_ready',
+          dataSource,
+          requestCount: requests?.length || 0,
+          tabId: dataSourcePageTabId,
+        },
+      });
       console.log('pageDecode dataSourcePageTabId:', dataSourcePageTabId);
+      const triggerBinanceCachedRequestsFn = async () => {
+        if (!isBinanceDataSourceName(dataSource)) {
+          return;
+        }
+        try {
+          const [result] = await chrome.scripting.executeScript({
+            target: { tabId: dataSourcePageTabId },
+            world: 'MAIN',
+            func: () => {
+              const replay = window.__kaitoReplayBinanceSignedRequests;
+              return typeof replay === 'function' ? replay() : -1;
+            },
+          });
+          await chrome.storage.local.set({
+            kaitoBinanceReplayDebug: {
+              at: Date.now(),
+              tabId: dataSourcePageTabId,
+              replayed: result?.result ?? null,
+            },
+          });
+        } catch (error) {
+          await chrome.storage.local.set({
+            kaitoBinanceReplayDebug: {
+              at: Date.now(),
+              tabId: dataSourcePageTabId,
+              error: error?.message || String(error),
+            },
+          });
+        }
+      };
+      const hydrateBinanceCachedRequestsFn = async () => {
+        if (!isBinanceDataSourceName(dataSource)) {
+          return;
+        }
+        try {
+          const [result] = await chrome.scripting.executeScript({
+            target: { tabId: dataSourcePageTabId },
+            world: 'MAIN',
+            func: () => {
+              const snapshot = window.__kaitoGetBinanceSignedRequestSnapshot;
+              return typeof snapshot === 'function' ? snapshot() : [];
+            },
+          });
+          const cachedRequests = Array.isArray(result?.result)
+            ? result.result
+            : [];
+          const targetRequests = requests.filter((r) => r.name !== 'first');
+          const existingBinanceHeaders =
+            Object.values(requestsMap).find(
+              (requestInfo) =>
+                isBinanceTargetUrl(requestInfo?.url) &&
+                requestInfo?.headers &&
+                (requestInfo.headers.Cookie || requestInfo.headers.cookie)
+            )?.headers ||
+            Object.values(requestsMap).find(
+              (requestInfo) =>
+                isBinanceTargetUrl(requestInfo?.url) && requestInfo?.headers
+            )?.headers ||
+            {};
+          let hydrated = 0;
+
+          for (const templateRequest of targetRequests) {
+            const cachedRequest = cachedRequests.find((requestInfo) => {
+              if (
+                templateRequest?.method &&
+                requestInfo?.method &&
+                String(templateRequest.method).toUpperCase() !==
+                  String(requestInfo.method).toUpperCase()
+              ) {
+                return false;
+              }
+              return (
+                binanceRequestMatchesTemplate(requestInfo.url, templateRequest) ||
+                checkIsRequiredUrl({
+                requestUrl: requestInfo.url,
+                requiredUrl: templateRequest.url,
+                urlType: templateRequest.urlType,
+                queryParams: templateRequest.queryParams,
+                })
+              );
+            });
+            if (!cachedRequest?.url) {
+              continue;
+            }
+
+            const syntheticRequestId = `kaito-binance-cache-${hydrated}-${Date.now()}`;
+            storeRequestsMap(syntheticRequestId, {
+              headers: {
+                ...cachedRequest.headers,
+                ...existingBinanceHeaders,
+              },
+              method: cachedRequest.method || templateRequest.method || 'GET',
+              url: cachedRequest.url,
+              requestId: syntheticRequestId,
+              templateRequestUrl: templateRequest.url,
+              type: 'xmlhttprequest',
+              isTarget: 1,
+              ...(cachedRequest.body !== undefined
+                ? { body: cachedRequest.body }
+                : {}),
+            });
+            hydrated += 1;
+          }
+
+          await chrome.storage.local.set({
+            kaitoBinanceCacheHydrationDebug: {
+              at: Date.now(),
+              tabId: dataSourcePageTabId,
+              cachedCount: cachedRequests.length,
+              hydrated,
+            },
+          });
+        } catch (error) {
+          await chrome.storage.local.set({
+            kaitoBinanceCacheHydrationDebug: {
+              at: Date.now(),
+              tabId: dataSourcePageTabId,
+              error: error?.message || String(error),
+            },
+          });
+        }
+      };
       const injectFn = async () => {
         await chrome.scripting.executeScript({
           target: {
@@ -2093,6 +2453,12 @@ export const pageDecodeMsgListener = async (
         }
         const isChatgptDataSource =
           String(activeTemplate?.dataSource || '').toLowerCase() === 'chatgpt';
+	        const isBinanceDataSource =
+	          isBinanceDataSourceName(activeTemplate?.dataSource) ||
+	          targetUrlExpressions.some(isBinanceTargetUrl);
+        if (isBinanceDataSource) {
+          return;
+        }
         await chrome.scripting.executeScript({
           target: {
             tabId: dataSourcePageTabId,
@@ -2272,6 +2638,9 @@ export const pageDecodeMsgListener = async (
       } else {
         await injectFn();
       }
+      await triggerBinanceCachedRequestsFn();
+      await hydrateBinanceCachedRequestsFn();
+      await checkWebRequestIsReadyFn();
     }
     if (name === 'initCompleted') {
       console.log('content_scripts-bg-decode receive:initCompleted');
