@@ -115,6 +115,32 @@ let hasStartedPageDecodeAttestation = false;
 let chatgptAuthorizationHeader = '';
 let chatgptReadyPollTimer = null;
 const CHATGPT_AUTH_HEADER_SESSION_KEY = 'kaitoChatGptAuthorizationHeader';
+const isChatGptTemplateTargetUrl = (url) => {
+  if (getActiveTemplateDataSource() !== 'chatgpt' || !url) {
+    return false;
+  }
+  const templateRequests =
+    activeTemplate?.datasourceTemplate?.requests ||
+    activeTemplate?.dataSourceTemplate?.requests ||
+    [];
+  return templateRequests.some((request) => {
+    if (!request?.url || request.name === 'first') {
+      return false;
+    }
+    return (
+      checkIsRequiredUrl({
+        requestUrl: url,
+        requiredUrl: request.url,
+        urlType: request.urlType,
+        queryParams: request.queryParams,
+      }) ||
+      (url.includes('/backend-api/subscriptions?') &&
+        request.url.includes('/backend-api/subscriptions')) ||
+      (url.includes('/backend-api/wham/usage') &&
+        request.url.includes('/backend-api/wham/usage'))
+    );
+  });
+};
 
 const sendMsgToSdk = async (msg) => {
   const { padoZKAttestationJSSDKDappTabId: dappTabId } =
@@ -259,7 +285,7 @@ const getChatGptAuthorizationHeader = () => {
 			return '';
 		}
 	};
-	const readChatGptAuthorizationHeaderFromSession = async () => {
+const readChatGptAuthorizationHeaderFromSession = async () => {
 		if (chatgptAuthorizationHeader) {
 			return chatgptAuthorizationHeader;
 		}
@@ -274,6 +300,32 @@ const getChatGptAuthorizationHeader = () => {
   }
   return '';
 };
+	const readChatGptRequestTrace = async () => {
+		const { kaitoChatGptRequestDebug = [] } = await chrome.storage.local.get([
+			'kaitoChatGptRequestDebug',
+		]);
+		const storageArea = chrome.storage?.session || chrome.storage?.local;
+		const { kaitoChatGptRequestTrace = [] } = await storageArea
+			.get(['kaitoChatGptRequestTrace'])
+			.catch(() => ({}));
+		const now = Date.now();
+		return [...kaitoChatGptRequestDebug, ...kaitoChatGptRequestTrace]
+			.filter((entry) => !entry?.at || now - entry.at < 10 * 60 * 1000)
+			.reverse();
+	};
+	const getChatGptAuthorizationHeaderFromTrace = (trace = []) => {
+		const entry = trace.find((item) => {
+			const headers = item?.headers || {};
+			return !!headers.Authorization || !!headers.authorization;
+		});
+		const headers = entry?.headers || {};
+		const authorization = headers.Authorization || headers.authorization || '';
+		if (typeof authorization === 'string' && authorization.startsWith('Bearer ')) {
+			chatgptAuthorizationHeader = authorization;
+			return authorization;
+		}
+		return '';
+	};
 	const getActiveTemplateDataSource = () =>
 	  String(activeTemplate?.dataSource || activeTemplate?.dataSourceId || '').toLowerCase();
 	const isBinanceDataSourceName = (dataSource) => {
@@ -298,7 +350,13 @@ const getChatGptAuthorizationHeader = () => {
 	  if (normalized.includes('/bapi/asset/v3/private/asset-service/wallet/wallet-group')) {
 	    return 'wallet-group';
 	  }
-	  if (normalized.includes('/bapi/asset/v2/private/asset-service/asset/get-user-asset')) {
+	  if (normalized.includes('/bapi/asset/v2/private/asset-service/wallet/balance')) {
+	    return 'wallet-balance';
+	  }
+	  if (
+	    normalized.includes('/bapi/asset/v2/private/asset-service/asset/get-user-asset') ||
+	    normalized.includes('/bapi/asset/v3/private/asset-service/asset/get-user-asset')
+	  ) {
 	    return 'spot-assets';
 	  }
 	  if (normalized.includes('/bapi/futures/v4/private/future/user-data/user-position')) {
@@ -314,14 +372,21 @@ const getChatGptAuthorizationHeader = () => {
 	  if (!templateKey || binanceEndpointKey(requestUrl) !== templateKey) {
 	    return false;
 	  }
-	  if (templateKey !== 'wallet-group') {
+	  if (templateKey !== 'wallet-group' && templateKey !== 'wallet-balance') {
 	    return true;
 	  }
 	  try {
 	    const parsedUrl = new URL(requestUrl);
+	    if (templateKey === 'wallet-group') {
+	      return (
+	        parsedUrl.searchParams.has('quoteAsset') &&
+	        parsedUrl.searchParams.get('needAlphaAsset') === 'true' &&
+	        parsedUrl.searchParams.get('needEuFuture') === 'true'
+	      );
+	    }
 	    return (
 	      parsedUrl.searchParams.has('quoteAsset') &&
-	      parsedUrl.searchParams.get('needAlphaAsset') === 'true' &&
+	      parsedUrl.searchParams.get('needBalanceDetail') === 'true' &&
 	      parsedUrl.searchParams.get('needEuFuture') === 'true'
 	    );
 	  } catch {
@@ -373,9 +438,11 @@ const hydrateMissingChatGptRequestsFromTrace = async (requests) => {
   if (getActiveTemplateDataSource() !== 'chatgpt') {
     return;
   }
+  const trace = await readChatGptRequestTrace();
   const authorizationHeader =
     getChatGptAuthorizationHeader() ||
-    (await readChatGptAuthorizationHeaderFromSession());
+    (await readChatGptAuthorizationHeaderFromSession()) ||
+    getChatGptAuthorizationHeaderFromTrace(trace);
   const hydrationDebug = {
     at: Date.now(),
     authorizationPresent: !!authorizationHeader,
@@ -395,17 +462,30 @@ const hydrateMissingChatGptRequestsFromTrace = async (requests) => {
 	    Authorization: authorizationHeader,
 	    ...(cookieHeader ? { Cookie: cookieHeader } : {}),
 	  };
-	  const { kaitoChatGptRequestDebug = [] } = await chrome.storage.local.get([
-	    'kaitoChatGptRequestDebug',
-	  ]);
-	  const storageArea = chrome.storage?.session || chrome.storage?.local;
-	  const { kaitoChatGptRequestTrace = [] } = await storageArea
-	    .get(['kaitoChatGptRequestTrace'])
-	    .catch(() => ({}));
-	  const now = Date.now();
-	  const trace = [...kaitoChatGptRequestDebug, ...kaitoChatGptRequestTrace]
-	    .filter((entry) => !entry?.at || now - entry.at < 10 * 60 * 1000)
-	    .reverse();
+  const normalizeChatGptHeaders = (headers = {}) => {
+    const normalized = { ...headers };
+    const authorization = normalized.Authorization || normalized.authorization || authorizationHeader;
+    if (authorization) {
+      normalized.Authorization = authorization;
+    }
+    delete normalized.authorization;
+    const cookie = normalized.Cookie || normalized.cookie || cookieHeader;
+    if (cookie) {
+      normalized.Cookie = cookie;
+    }
+    delete normalized.cookie;
+    return normalized;
+  };
+  const normalizeChatGptTargetUrl = (expression) => {
+    let value = String(expression || '').trim();
+    value = value.replace(/\(\?:\\\?\.\*\)\?\$$/, '');
+    value = value.replace(/\$$/, '');
+    value = value.replace(/\\\./g, '.');
+    value = value.replace(/\\\//g, '/');
+    return /^https:\/\/chatgpt\.com\/backend-api\/wham\/usage$/.test(value)
+      ? value
+      : '';
+  };
   hydrationDebug.traceCount = trace.length;
   for (const request of requests) {
     if (!request?.url || request.name === 'first') {
@@ -417,17 +497,10 @@ const hydrateMissingChatGptRequestsFromTrace = async (requests) => {
 	    if (alreadyCapturedKey) {
 	      const headers = requestsMap[alreadyCapturedKey]?.headers || {};
 	      storeRequestsMap(alreadyCapturedKey, {
-	        headers: {
+	        headers: normalizeChatGptHeaders({
 	          ...fallbackHeaders,
 	          ...headers,
-	          Authorization:
-	            headers.Authorization ||
-	            headers.authorization ||
-	            authorizationHeader,
-	          ...(headers.Cookie || headers.cookie || !cookieHeader
-	            ? {}
-	            : { Cookie: cookieHeader }),
-	        },
+	        }),
 	        isTarget: 1,
 	      });
       hydrationDebug.hydrated.push({
@@ -456,22 +529,34 @@ const hydrateMissingChatGptRequestsFromTrace = async (requests) => {
           request.url.includes('/backend-api/wham/usage'))
       );
     });
+	    const traceHeaders = traceEntry?.headers || {};
+	    const chatGptHeaders = normalizeChatGptHeaders({
+	      ...fallbackHeaders,
+	      ...traceHeaders,
+	    });
 	    if (!traceEntry?.url) {
+	      const syntheticUrl = normalizeChatGptTargetUrl(request.url);
+	      if (syntheticUrl) {
+	        const requestId = `kaito-chatgpt-synthetic-${request.name || syntheticUrl}`;
+	        storeRequestsMap(requestId, {
+	          headers: chatGptHeaders,
+	          method: request.method || 'GET',
+	          url: syntheticUrl,
+	          requestId,
+	          templateRequestUrl: request.url,
+	          type: 'xmlhttprequest',
+	          isTarget: 1,
+	        });
+	        hydrationDebug.hydrated.push({
+	          templateRequestUrl: request.url,
+	          url: syntheticUrl,
+	          mode: 'synthetic',
+	        });
+	        continue;
+	      }
 	      hydrationDebug.skipped.push({ url: request.url, reason: 'trace_missing' });
 	      continue;
 	    }
-	    const traceHeaders = traceEntry.headers || {};
-	    const chatGptHeaders = {
-	      ...fallbackHeaders,
-	      ...traceHeaders,
-	      Authorization:
-	        traceHeaders.Authorization ||
-	        traceHeaders.authorization ||
-	        authorizationHeader,
-	      ...(traceHeaders.Cookie || traceHeaders.cookie || !cookieHeader
-	        ? {}
-	        : { Cookie: cookieHeader }),
-	    };
 	    const requestId = `kaito-chatgpt-hydrated-${request.name || request.url}`;
 	    storeRequestsMap(requestId, {
 	      headers: chatGptHeaders,
@@ -1166,6 +1251,9 @@ export const pageDecodeMsgListener = async (
 
 	        const interceptorRequests = requests.filter((r) => r.name !== 'first');
 	        const interceptorUrlArr = interceptorRequests.map((i) => i.url);
+	        if (dataSource === 'chatgpt') {
+	          await hydrateMissingChatGptRequestsFromTrace(requests);
+	        }
 	        const writeBinanceReadinessDebug = async (extra = {}) => {
 	          if (
 	            !isBinanceDataSourceName(dataSource) &&
@@ -1683,13 +1771,12 @@ export const pageDecodeMsgListener = async (
           formatRequests = req;
           formatResponse = res;
         }
-
-        for (const fr of formatRequests) {
-          if (fr.headers) {
-            fr.headers['Accept-Encoding'] = 'identity';
-          }
-          fr.url = fr.url.split('#')[0];
+      }
+      for (const fr of formatRequests) {
+        if (fr.headers) {
+          fr.headers['Accept-Encoding'] = 'identity';
         }
+        fr.url = fr.url.split('#')[0];
       }
       Object.assign(aligorithmParams, {
         reqType: 'web',
@@ -1709,6 +1796,11 @@ export const pageDecodeMsgListener = async (
       }
 
       formatAlgorithmParams = aligorithmParams;
+      await chrome.storage.local.set({
+        kaitoFormatAlgorithmParamsDebug:
+          redactAlgorithmParamsForKaitoDebug(aligorithmParams),
+        kaitoFormatRequestsMapDebug: redactRequestsMapForKaitoDebug(),
+      });
       console.log(
         'formatAlgorithmParams',
         formatAlgorithmParams,
@@ -1812,6 +1904,14 @@ export const pageDecodeMsgListener = async (
           resType === 'algorithm' &&
           ['getAttestation', 'getAttestationResult'].includes(resMethodName)
         ) {
+          await chrome.storage.local.set({
+            kaitoPreAlgorithmDebug: {
+              at: Date.now(),
+              resMethodName,
+              hasResponse: Boolean(message.res),
+              response: message.res || null,
+            },
+          });
           if (message.res) {
             const { retcode, isUserClick } = JSON.parse(message.res);
             if (isUserClick === 'false') {
@@ -1909,15 +2009,7 @@ export const pageDecodeMsgListener = async (
         const isOwnExtensionInitiated = details?.initiator?.startsWith(
           `chrome-extension://${chrome.runtime.id}`
         );
-        const isChatgptSubscriptionUrl = details?.url?.startsWith(
-          'https://chatgpt.com/backend-api/subscriptions?'
-        );
-        if (
-          isOwnExtensionInitiated &&
-          !(
-            activeTemplate?.dataSource === 'chatgpt' && isChatgptSubscriptionUrl
-          )
-        ) {
+        if (isOwnExtensionInitiated) {
           return;
         }
         if (![-1, dataSourcePageTabId].includes(details.tabId)) {
@@ -1989,7 +2081,7 @@ export const pageDecodeMsgListener = async (
             }
           }
         }
-        const isTarget = requests.some((r) => {
+        let isTarget = requests.some((r) => {
           if (r.name === 'first') {
             return false;
           }
@@ -2167,15 +2259,7 @@ export const pageDecodeMsgListener = async (
         const isOwnExtensionInitiated = details?.initiator?.startsWith(
           `chrome-extension://${chrome.runtime.id}`
         );
-        const isChatgptSubscriptionUrl = details?.url?.startsWith(
-          'https://chatgpt.com/backend-api/subscriptions?'
-        );
-        if (
-          isOwnExtensionInitiated &&
-          !(
-            activeTemplate?.dataSource === 'chatgpt' && isChatgptSubscriptionUrl
-          )
-        ) {
+        if (isOwnExtensionInitiated) {
           return;
         }
         if (![-1, dataSourcePageTabId].includes(details.tabId)) {
@@ -2195,15 +2279,21 @@ export const pageDecodeMsgListener = async (
             // real target; ignore bare 401s / unrelated completions.
             return;
           }
-          // ChatGPT subscription verification has a single target request
-          // (the /backend-api/subscriptions call). The legacy conversation
-          // fetch (extraRequestFn) that used to set RequestsHasCompleted is
-          // not part of this flow, so mark completion here directly — the
-          // readiness gate requires RequestsHasCompleted for dataSource chatgpt.
           RequestsHasCompleted = true;
           console.log('onCompletedFn', dataSource, details);
-          // chatgpt has only one requestUrl
-          // await extraRequestFn();// For simplified version comments
+          const interceptorRequests = requests.filter((r) => r.name !== 'first');
+          const allTargetsFound = interceptorRequests.every((request) =>
+            Object.values(requestsMap).some((requestInfo) => {
+              if (!requestInfo?.isTarget) {
+                return false;
+              }
+              return requestInfoMatchesTemplateRequest(requestInfo, request);
+            })
+          );
+          if (!allTargetsFound) {
+            checkWebRequestIsReadyFn();
+            return;
+          }
           console.log('setUIStep-toVerify');
           sendMsgToDataSourcePage({
             type: 'pageDecode',
@@ -2213,16 +2303,17 @@ export const pageDecodeMsgListener = async (
             },
           });
 
-          await formatAlgorithmParamsFn();
+          if (!formatAlgorithmParams) {
+            await formatAlgorithmParamsFn();
+          }
           console.log('RequestsHasCompleted=', RequestsHasCompleted);
-          // Two-stage flow: preAlgorithmFn runs the offline pre-generation
-          // (isUserClick:false); when it reaches RUNNING_PAUSE it sets
-          // preAlgorithmStatus='1', which the readiness gate below waits on
-          // before startPageDecodeAttestationFn fires the online run
-          // (isUserClick:true). This serialization is required for chatgpt:
-          // single-stage online-only never completes (times out even at 8min),
-          // and firing both concurrently collides ("can not re-run online").
-          preAlgorithmFn();
+          if (!preAlgorithmFlag) {
+            // Two-stage flow: preAlgorithmFn runs the offline pre-generation
+            // (isUserClick:false); when it reaches RUNNING_PAUSE it sets
+            // preAlgorithmStatus='1', which the readiness gate below waits on
+            // before startPageDecodeAttestationFn fires the online run.
+            preAlgorithmFn();
+          }
           checkWebRequestIsReadyFn();
         }
       };
@@ -2553,14 +2644,20 @@ export const pageDecodeMsgListener = async (
                       ];
                     }
                   }
-                  for (const url of subscriptionUrls) {
+                  const chatGptTargetUrls = [
+                    ...subscriptionUrls,
+                    ...urls.filter((url) =>
+                      url.includes('/backend-api/wham/usage')
+                    ),
+                  ].filter((url, index, arr) => url && arr.indexOf(url) === index);
+                  for (const url of chatGptTargetUrls) {
                     await fetch(url, {
                       credentials: 'include',
                       headers: authHeader,
                       cache: 'no-store',
                     });
                     console.log(
-                      '[kaito-attest] triggered ChatGPT subscriptions request (pageDecode bearer fast-path)',
+                      '[kaito-attest] triggered ChatGPT target request (pageDecode bearer fast-path)',
                       url
                     );
                   }
