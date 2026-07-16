@@ -2535,18 +2535,21 @@ export const pageDecodeMsgListener = async (
         });
       };
       const triggerExistingDataSourceRequestsFn = async () => {
-        const targetUrlExpressions = requests
+        const targetRequests = requests
           .filter((r) => r.name !== 'first')
-          .map((r) => r.url)
-          .filter(Boolean);
-        if (!targetUrlExpressions.length) {
+          .map((r) => ({
+            url: r.url,
+            method: String(r.method || 'GET').toUpperCase(),
+          }))
+          .filter((r) => r.url);
+        if (!targetRequests.length) {
           return;
         }
         const isChatgptDataSource =
           String(activeTemplate?.dataSource || '').toLowerCase() === 'chatgpt';
 	        const isBinanceDataSource =
 	          isBinanceDataSourceName(activeTemplate?.dataSource) ||
-	          targetUrlExpressions.some(isBinanceTargetUrl);
+	          targetRequests.some((request) => isBinanceTargetUrl(request.url));
         if (isBinanceDataSource) {
           return;
         }
@@ -2554,8 +2557,10 @@ export const pageDecodeMsgListener = async (
           target: {
             tabId: dataSourcePageTabId,
           },
-          args: [targetUrlExpressions, isChatgptDataSource],
-          func: async (expressions, isChatgpt) => {
+          args: [targetRequests, isChatgptDataSource],
+          func: async (requestConfigs, isChatgpt) => {
+            const requests = Array.isArray(requestConfigs) ? requestConfigs : [];
+            const expressions = requests.map((request) => request.url).filter(Boolean);
             const normalizeLiteralUrl = (expression) => {
               let value = String(expression || '').trim();
               value = value.replace(/\(\?:\\\?\.\*\)\?\$$/, '');
@@ -2586,8 +2591,9 @@ export const pageDecodeMsgListener = async (
               .getEntriesByType('resource')
               .map((entry) => entry.name)
               .filter((url) => /^https?:\/\//.test(url));
-            let urls = expressions
-              .map((expression) => {
+            let urls = requests
+              .map((request) => {
+                const expression = request.url;
                 // Prefer the actual URL the page already fetched (resource
                 // timing): it carries required query params (e.g. Lighter's
                 // ?by=&value=) that normalizeLiteralUrl strips off the regex,
@@ -2595,9 +2601,21 @@ export const pageDecodeMsgListener = async (
                 const matchedUrl = [...resources]
                   .reverse()
                   .find((url) => matchesExpression(url, expression));
-                return matchedUrl || normalizeLiteralUrl(expression);
+                const url = matchedUrl || normalizeLiteralUrl(expression);
+                return url
+                  ? {
+                      url,
+                      method: String(request.method || 'GET').toUpperCase(),
+                    }
+                  : null;
               })
-              .filter((url, index, arr) => url && arr.indexOf(url) === index);
+              .filter(
+                (request, index, arr) =>
+                  request &&
+                  arr.findIndex(
+                    (entry) => entry?.url === request.url && entry?.method === request.method
+                  ) === index
+              );
 
             if (isChatgpt) {
               try {
@@ -2646,7 +2664,7 @@ export const pageDecodeMsgListener = async (
                   }
                   const chatGptTargetUrls = [
                     ...subscriptionUrls,
-                    ...urls.filter((url) =>
+                    ...urls.map((request) => request.url).filter((url) =>
                       url.includes('/backend-api/wham/usage')
                     ),
                   ].filter((url, index, arr) => url && arr.indexOf(url) === index);
@@ -2675,21 +2693,29 @@ export const pageDecodeMsgListener = async (
               return;
             }
 
-            for (const url of urls) {
+            for (const request of urls) {
               // Cookies first (session-scoped endpoints need them); on failure
               // retry without. Public endpoints that reply Access-Control-Allow-
               // Origin: * (e.g. Lighter) reject a credentialed cross-origin fetch,
               // so credentials:'include' fails even though the data is public.
               for (const credentials of ['include', 'omit']) {
                 try {
-                  const response = await fetch(url, {
+                  const isPost = request.method === 'POST';
+                  const response = await fetch(request.url, {
+                    method: request.method,
                     credentials,
                     cache: 'no-store',
+                    ...(isPost
+                      ? {
+                          headers: { 'content-type': 'application/json' },
+                          body: '{}',
+                        }
+                      : {}),
                   });
                   if (response.ok) {
                     console.log(
                       '[kaito-attest] pageDecode triggered target request',
-                      url,
+                      request,
                       credentials
                     );
                     break;
