@@ -294,6 +294,16 @@ export const padoZKAttestationJSSDKMsgListener = async (
     const padoUrlKey = algorithmType === 'proxytls' ? 'zkPadoUrl' : 'padoUrl';
     let padoUrl = await getAlgoApi(padoUrlKey, algoApisParam);
     let proxyUrl = await getAlgoApi('proxyUrl', algoApisParam);
+    await chrome.storage.local.set({
+      kaitoAlgorithmUrlDebug: {
+        at: Date.now(),
+        algorithmType,
+        padoUrlKey,
+        padoUrl,
+        proxyUrl,
+        hasDynamicAlgoApis: Boolean(algoApisParam),
+      },
+    });
     await appendKaitoPadoTrace('background_algo_urls_ready', {
       hasPadoUrl: Boolean(padoUrl),
       hasProxyUrl: Boolean(proxyUrl),
