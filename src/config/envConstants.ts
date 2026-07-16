@@ -10,7 +10,13 @@ import store from '@/store';
 import type { UserState } from '@/types/store';
 type ENVTYPE = 'development' | 'test' | 'production';
 
-export const CURENV = process.env.NODE_ENV as ENVTYPE;
+const DEFAULT_ENV: ENVTYPE = 'development';
+const normalizeEnv = (value: string | undefined): ENVTYPE =>
+  value === 'development' || value === 'test' || value === 'production'
+    ? value
+    : DEFAULT_ENV;
+
+export const CURENV = normalizeEnv(process.env.NODE_ENV);
 // export const CURENV = 'development';
 // export const CURENV = 'production';
 console.log('222CURENV', CURENV, process.env);
@@ -774,9 +780,9 @@ export const getPadoUrl = async () => {
   if (algorithmUrl) {
     const algorithmUrlObj = JSON.parse(algorithmUrl);
     console.log('updateAlgoUrl getPadoUrl PADOURL=', algorithmUrlObj.padoUrl);
-    return algorithmUrlObj.padoUrl;
+    return algorithmUrlObj.padoUrl || PADOURL;
   } else {
-    return '';
+    return PADOURL;
   }
 };
 
@@ -785,9 +791,9 @@ export const getZkPadoUrl = async () => {
   if (algorithmUrl) {
     const algorithmUrlObj = JSON.parse(algorithmUrl);
     console.log('updateAlgoUrl getZkPadoUrl ZKPADOURL=', algorithmUrlObj.zkPadoUrl);
-    return algorithmUrlObj.zkPadoUrl;
+    return algorithmUrlObj.zkPadoUrl || ZKPADOURL;
   } else {
-    return '';
+    return ZKPADOURL;
   }
 };
 
@@ -800,9 +806,9 @@ export const getProxyUrl = async () => {
       'updateAlgoUrl getProxyUrl PROXYURL=',
       algorithmUrlObj.proxyUrl
     );
-    return algorithmUrlObj.proxyUrl;
+    return algorithmUrlObj.proxyUrl || PROXYURL;
   } else {
-    return '';
+    return PROXYURL;
   }
 };
 
