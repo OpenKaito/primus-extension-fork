@@ -2619,16 +2619,24 @@ export const pageDecodeMsgListener = async (
 
             if (isChatgpt) {
               try {
-                let subscriptionUrls = resources
-                  .filter((url) =>
-                    /\/backend-api\/subscriptions\?account_id=/.test(url)
-                  )
-                  .filter((url) =>
-                    expressions.some((expression) =>
-                      matchesExpression(url, expression)
-                    )
-                  )
-                  .filter((url, index, arr) => arr.indexOf(url) === index);
+                const wantsSubscription = expressions.some((expression) =>
+                  expression.includes('/backend-api/subscriptions')
+                );
+                const wantsUsage = expressions.some((expression) =>
+                  expression.includes('/backend-api/wham/usage')
+                );
+                let subscriptionUrls = wantsSubscription
+                  ? resources
+                      .filter((url) =>
+                        /\/backend-api\/subscriptions\?account_id=/.test(url)
+                      )
+                      .filter((url) =>
+                        expressions.some((expression) =>
+                          matchesExpression(url, expression)
+                        )
+                      )
+                      .filter((url, index, arr) => arr.indexOf(url) === index)
+                  : [];
                 const sessionResponse = await fetch('/api/auth/session', {
                   credentials: 'include',
                   cache: 'no-store',
@@ -2639,7 +2647,7 @@ export const pageDecodeMsgListener = async (
                 const accessToken = session?.accessToken;
                 if (typeof accessToken === 'string' && accessToken.length > 0) {
                   const authHeader = { authorization: `Bearer ${accessToken}` };
-                  if (subscriptionUrls.length === 0) {
+                  if (wantsSubscription && subscriptionUrls.length === 0) {
                     const accountsResponse = await fetch(
                       '/backend-api/accounts/check/v4-2023-04-27',
                       {
@@ -2664,9 +2672,11 @@ export const pageDecodeMsgListener = async (
                   }
                   const chatGptTargetUrls = [
                     ...subscriptionUrls,
-                    ...urls.map((request) => request.url).filter((url) =>
-                      url.includes('/backend-api/wham/usage')
-                    ),
+                    ...(wantsUsage
+                      ? urls.map((request) => request.url).filter((url) =>
+                          url.includes('/backend-api/wham/usage')
+                        )
+                      : []),
                   ].filter((url, index, arr) => url && arr.indexOf(url) === index);
                   for (const url of chatGptTargetUrls) {
                     await fetch(url, {
