@@ -52,7 +52,13 @@ const SetPwdDialog: React.FC<SetPwdDialogProps> = memo(
       const m = taskIds.reduce((prev, curr) => {
         let subTitle = 'Proof of Account Ownership';
         let obj = { subTitle, id: curr };
-        if (curr === '6') {
+        if (curr === '2') {
+          Object.assign(obj, {
+            dataSourceId: 'binance',
+            title: 'Owns Binance Account',
+            score: '+100 xp',
+          });
+        } else if (curr === '6') {
           Object.assign(obj, {
             dataSourceId: 'tiktok',
             title: 'Owns TikTok Account',

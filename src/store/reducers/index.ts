@@ -6,7 +6,7 @@ const DEFAULTCREDTYPELIST = [
     id: '1',
     credIdentifier: 'ASSETS_PROOF',
     credTitle: 'Assets Proof',
-    credIntroduce: 'Assets balance from supported sources',
+    credIntroduce: 'Assets balance in Binance, OKX',
     credLogoUrl:
       'https://storage.googleapis.com/primuslabs-online/others/iconCredAsset.svg',
     credDetails:
@@ -22,7 +22,7 @@ const DEFAULTCREDTYPELIST = [
     id: '2',
     credIdentifier: 'TOKEN_HOLDINGS',
     credTitle: 'Token Holdings Proof',
-    credIntroduce: 'Token ownership from supported sources',
+    credIntroduce: 'Ownership in Binance, Coinbase, OKX',
     credLogoUrl:
       'https://storage.googleapis.com/primuslabs-online/others/iconCredToken.svg',
     credDetails:

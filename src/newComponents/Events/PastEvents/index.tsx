@@ -90,6 +90,7 @@ const Cards: React.FC<PDropdownProps> = memo(({ onClick = (item) => {} }) => {
           return {
             id: LUCKYDRAWEVENTNAME,
             combineType: '0',
+            // parterIcon: iconDataSourceBinance,
 
             periodType: '0',
             period: { startTime, endTime },

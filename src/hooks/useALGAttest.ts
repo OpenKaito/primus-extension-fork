@@ -341,6 +341,20 @@ const useALGAttest = function useAttest() {
                   sourcePageTip: attestTipMap[errorCode].title,
                 });
               }
+            } else if (
+              activeAttestation?.verificationContent === 'Assets Proof' &&
+              activeAttestation?.dataSourceId === 'binance'
+            ) {
+              let type, desc, title;
+              errorCode = '00102';
+              type = attestTipMap[errorCode].type;
+              desc = attestTipMap[errorCode].desc;
+              title = attestTipMap[errorCode].title;
+              Object.assign(msgObj, {
+                type,
+                desc,
+                sourcePageTip: title,
+              });
             } else {
               errorCode = '00104';
               Object.assign(msgObj, {

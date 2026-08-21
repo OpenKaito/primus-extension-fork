@@ -1,10 +1,13 @@
+import iconDataSourceBinance from '@/assets/img/iconDataSourceBinance.svg';
 import iconDataSourceTwitter from '@/assets/img/iconDataSourceX.svg';
+import iconDataSourceOKX from '@/assets/img/iconDataSourceOKX.svg';
 import iconDataSourceKucoin from '@/assets/img/iconDataSourceKucoin.svg';
 import iconDataSourceCoinbase from '@/assets/img/iconDataSourceCoinbase.png';
 import iconDataSourceHuobi from '@/assets/img/iconDataSourceHuobi.svg';
 import iconDataSourceHuobiWithCircle from '@/assets/img/iconDataSourceHuobiWithCircle.svg';
 import iconDataSourceGate from '@/assets/img/iconDataSourceGate.svg';
 import iconDataSourceBitget from '@/assets/img/iconDataSourceBitget.svg';
+import iconDataSourceBybit from '@/assets/img/iconDataSourceBybit.svg';
 import iconDataSourceMEXC from '@/assets/img/iconDataSourceMEXC.png';
 import iconDataSourceGithub from '@/assets/img/iconDataSourceGithub.svg';
 import iconDataSourceDiscord from '@/assets/img/iconDataSourceDiscord.png';
@@ -15,12 +18,16 @@ import iconDataSourceGoogle from '@/assets/img/iconGoogle.svg';
 import iconDataSourceTikTok from '@/assets/img/iconDataSourceTiktok.png';
 import iconDataSourceChatgpt from '@/assets/img/iconDataSourceChatgpt.svg';
 
+import Binance from '@/services/webdata/webexchange/webbinance';
+
+import OKX from '@/services/webdata/webexchange/webokx';
 import KuCoin from '@/services/exchange/kucoin';
 import Coinbase from '@/services/exchange/coinbase';
 import Huobi from '@/services/exchange/huobi';
 import Gate from '@/services/exchange/gate';
 import Bitget from '@/services/exchange/bitget';
 import WebBitGet from '@/services/webdata//webexchange/webbitget';
+import Bybit from '@/services/exchange/bybit';
 import Mexc from '@/services/exchange/mexc';
 import WebTikTok from '@/services/webdata/websocial/webtiktok';
 import type { ExchangeMeta, DataSourceMapType } from '@/types/dataSource';
@@ -85,6 +92,36 @@ export const DATASOURCEMAP: DataSourceMapType = {
 
     connectType: 'Web',
   },
+  binance: {
+    id: 'binance',
+    name: 'Binance',
+    type: 'Assets',
+    icon: iconDataSourceBinance,
+    desc: 'Support fetching spot & flexible account assets data for management and attestation creation.',
+    unConnectTip:
+      'You can fetch spot & flexible account assets data from your Binance account to manage your assets or create attestations.',
+    constructorF: Binance,
+    baseName: 'api.binance.com',
+    accountBalanceUrl: 'https://api.binance.com/api/v3/account',
+
+    jumpTo: 'https://www.binance.com/my/dashboard',
+    connectType: 'Web',
+  },
+  okx: {
+    id: 'okx',
+    name: 'OKX',
+    type: 'Assets',
+    icon: iconDataSourceOKX,
+    desc: 'Support fetching trading account assets data for management and attestation creation.',
+    unConnectTip:
+      'You can fetch trading account assets data from your OKX account to manage your data or create attestations.',
+    requirePassphase: true,
+    constructorF: OKX,
+    baseName: 'www.okx.com',
+
+    accountBalanceUrl: 'https://www.okx.com/api/v5/account/balance',
+    connectType: 'Web',
+  },
   coinbase: {
     id: 'coinbase',
     name: 'Coinbase',
@@ -96,6 +133,8 @@ export const DATASOURCEMAP: DataSourceMapType = {
     requirePassphase: false,
     constructorF: Coinbase,
     baseName: 'api.coinbase.com',
+    accountBalanceUrl: 'https://api.binance.com/api/v3/account',
+
     connectType: 'API',
     hidden: true,
   },
@@ -155,6 +194,20 @@ export const DATASOURCEMAP: DataSourceMapType = {
     jumpTo: 'https://www.htx.com/zh-cn/finance/account/spot/',
     connectType: 'Web',
     hidden: true,
+  },
+  bybit: {
+    id: 'bybit',
+    name: 'Bybit',
+    type: 'Assets',
+    icon: iconDataSourceBybit,
+    desc: 'Support fetching spot account assets data for management and attestation creation.',
+    unConnectTip:
+      'You can fetch spot account data from your Bybit account to manage your data or create attestations.',
+    requirePassphase: false,
+    // constructorF: Bybit,
+    baseName: 'api.bybit.com',
+
+    connectType: 'API',
   },
   kucoin: {
     id: 'kucoin',
@@ -239,9 +292,13 @@ export const DATASOURCEMAPVALUES: DataSourceItemType[] =
   Object.values(DATASOURCEMAP);
 
 export const guideMap = {
+  binance:
+    'https://docs.padolabs.org/Exchanges-API-Setup/Binance-API-Key-Setup',
   coinbase:
     'https://docs.padolabs.org/Exchanges-API-Setup/Coinbase-API-Key-Setup',
   kucoin: 'https://docs.padolabs.org/Exchanges-API-Setup/Kucoin-API-Key-Setup',
+  bybit: 'https://docs.padolabs.org/Exchanges-API-Setup/Bybit-API-Key-Setup',
+  okx: 'https://docs.padolabs.org/Exchanges-API-Setup/OKX-API-Key-Setup',
   gate: 'https://docs.padolabs.org/Exchanges-API-Setup/Gate-API-Key-Setup',
   huobi: 'https://docs.padolabs.org/Exchanges-API-Setup/Huobi-API-Key-Setup',
   bitget: 'https://docs.padolabs.org/Exchanges-API-Setup/Bitget-API-Key-Setup',
@@ -250,10 +307,13 @@ export const guideMap = {
 
 export const SUPPORTATTESTDATASOURCES = [
   // 'web3 wallet',
+  'binance',
+  'okx',
   'x',
   'tiktok',
   'google',
   'coinbase',
   'bitget',
+  'bybit',
   'discord'
 ];

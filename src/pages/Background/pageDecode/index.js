@@ -19,6 +19,21 @@ import {
   rowForNilion,
 } from '../nilionEvent/index.js';
 import {
+  templateIdForBinanceEarnHistory,
+  formatRequestResponseFnForBinanceEarnHistory,
+  updateRequestMapFnForbBinanceEarnHistory,
+  templateIdForBinanceEarnHistoryABalance,
+  formatRequestResponseFnForBinanceEarnHistoryABalance,
+  templateIdForReputationPhalaBinanceEarnBalance,
+  updateRequestMapFnForReputationPhalaBinanceEarnBalance,
+  checkTargetRequestFnForReputationPhalaBinanceEarnBalance,
+  formatRequestResponseFnForReputationPhalaBinanceEarnBalance,
+  templateIdForBinanceSomeTokenBalance,
+  templateIdForBinanceSomeTokenBalanceRequestUrl,
+  checkTargetRequestFnForBinanceSomeTokenBalance,
+  formatRequestResponseFnForBinanceSomeTokenBalance,
+} from '../binanceEarnHistoryEvent/index.js';
+import {
   templateIdForTwitch,
   formatJsonArrFnForTwitch,
   formatRequestResponseFnForTwitch,
@@ -39,6 +54,12 @@ import {
   templateIdForPhalaCvmList,
   formatRequestResponseFnForPhalaCvmList,
 } from '../phala/index.js';
+import {
+  templateIdForOkxSomeTokenBalance,
+  templateIdForOkxSomeTokenBalanceRequestUrl,
+  checkTargetRequestFnForOkxSomeTokenBalance,
+  formatRequestResponseFnForOkxSomeTokenBalance,
+} from '../okx/index.js';
 import {
   templateIdForCoinstatsSomeTokenBalance,
   checkTargetRequestFnForCoinstatsSomeTokenBalance,
@@ -307,6 +328,71 @@ const readChatGptAuthorizationHeaderFromSession = async () => {
 	};
 	const getActiveTemplateDataSource = () =>
 	  String(activeTemplate?.dataSource || activeTemplate?.dataSourceId || '').toLowerCase();
+	const isBinanceDataSourceName = (dataSource) => {
+	  const normalized = String(dataSource || '').toLowerCase();
+	  return normalized === 'binance' || normalized.startsWith('binance_');
+	};
+		const isBinanceTargetUrl = (url) => {
+		  const normalized = String(url || '')
+		    .toLowerCase()
+		    .replace(/\\\//g, '/')
+		    .replace(/\\\./g, '.');
+		  return normalized.includes('binance.com/bapi/');
+		};
+	const binanceEndpointKey = (value) => {
+	  const normalized = String(value || '')
+	    .toLowerCase()
+	    .replace(/\\\//g, '/')
+	    .replace(/\\\./g, '.');
+	  if (normalized.includes('/bapi/accounts/v1/private/account/get-user-base-info')) {
+	    return 'user-base-info';
+	  }
+	  if (normalized.includes('/bapi/asset/v3/private/asset-service/wallet/wallet-group')) {
+	    return 'wallet-group';
+	  }
+	  if (normalized.includes('/bapi/asset/v2/private/asset-service/wallet/balance')) {
+	    return 'wallet-balance';
+	  }
+	  if (
+	    normalized.includes('/bapi/asset/v2/private/asset-service/asset/get-user-asset') ||
+	    normalized.includes('/bapi/asset/v3/private/asset-service/asset/get-user-asset')
+	  ) {
+	    return 'spot-assets';
+	  }
+	  if (normalized.includes('/bapi/futures/v4/private/future/user-data/user-position')) {
+	    return 'futures-position';
+	  }
+	  return '';
+	};
+	const binanceRequestMatchesTemplate = (requestUrl, templateRequest) => {
+	  if (!isBinanceTargetUrl(requestUrl) || !templateRequest?.url) {
+	    return false;
+	  }
+	  const templateKey = binanceEndpointKey(templateRequest.url);
+	  if (!templateKey || binanceEndpointKey(requestUrl) !== templateKey) {
+	    return false;
+	  }
+	  if (templateKey !== 'wallet-group' && templateKey !== 'wallet-balance') {
+	    return true;
+	  }
+	  try {
+	    const parsedUrl = new URL(requestUrl);
+	    if (templateKey === 'wallet-group') {
+	      return (
+	        parsedUrl.searchParams.has('quoteAsset') &&
+	        parsedUrl.searchParams.get('needAlphaAsset') === 'true' &&
+	        parsedUrl.searchParams.get('needEuFuture') === 'true'
+	      );
+	    }
+	    return (
+	      parsedUrl.searchParams.has('quoteAsset') &&
+	      parsedUrl.searchParams.get('needBalanceDetail') === 'true' &&
+	      parsedUrl.searchParams.get('needEuFuture') === 'true'
+	    );
+	  } catch {
+	    return false;
+	  }
+	};
 	const requestInfoMatchesTemplateRequest = (requestInfo, templateRequest) => {
 	  if (!requestInfo?.url || !templateRequest?.url) {
 	    return false;
@@ -322,6 +408,9 @@ const readChatGptAuthorizationHeaderFromSession = async () => {
 	  if (requestInfo.templateRequestUrl === templateRequest.url) {
 	    return true;
 	  }
+  if (binanceRequestMatchesTemplate(requestInfo.url, templateRequest)) {
+    return true;
+  }
   const checkRes = checkIsRequiredUrl({
     requestUrl: requestInfo.url,
     requiredUrl: templateRequest.url,
@@ -925,6 +1014,7 @@ export const pageDecodeMsgListener = async (
                     lastBody.endTime,
                     startTimeDistanceForNilion
                   );
+                  // console.log('nilion', 'binance time:', lastBody.endTime);
                   // console.log(
                   //   'utc time:',
                   //   getUTCDayLastSecondTime(lastBody.endTime)
@@ -953,10 +1043,42 @@ export const pageDecodeMsgListener = async (
                 });
               }
 
+              if (
+                [
+                  templateIdForBinanceEarnHistory,
+                  templateIdForBinanceEarnHistoryABalance,
+                  templateIdForBinanceEarnHistoryABalance,
+                ].includes(activeTemplate?.attTemplateID)
+              ) {
+                const newRequestMap = updateRequestMapFnForbBinanceEarnHistory(
+                  requestsMap[matchRequestId],
+                  additionParamsObj
+                );
+                targetRequestUrl = newRequestMap.url;
+                storeRequestsMap(matchRequestId, newRequestMap);
+              }
+
+              if (
+                [templateIdForReputationPhalaBinanceEarnBalance].includes(
+                  activeTemplate?.attTemplateID
+                )
+              ) {
+                const newRequestMap =
+                  updateRequestMapFnForReputationPhalaBinanceEarnBalance(
+                    requestsMap[matchRequestId],
+                    additionParamsObj
+                  );
+                targetRequestUrl = newRequestMap.url;
+                storeRequestsMap(matchRequestId, newRequestMap);
+              }
               let matchRequestUrlResult;
               let isTargetUrl = false;
-	              if (getActiveTemplateDataSource() === 'claude') {
-                // Claude.ai can be gated when replayed
+	              if (
+	                getActiveTemplateDataSource() === 'claude' ||
+	                isBinanceDataSourceName(getActiveTemplateDataSource()) ||
+	                isBinanceTargetUrl(targetRequestUrl)
+	              ) {
+                // Claude.ai and Binance private APIs can be gated when replayed
                 // from the extension background, even with captured cookies. The
                 // page's own XHR/fetch is the verifiable traffic; do not block
                 // readiness on a background preflight that cannot reproduce the
@@ -1053,6 +1175,49 @@ export const pageDecodeMsgListener = async (
               if (
                 matchRequestUrlResult &&
                 activeTemplate?.attTemplateID ===
+                  templateIdForReputationPhalaBinanceEarnBalance
+              ) {
+                isTargetUrl =
+                  await checkTargetRequestFnForReputationPhalaBinanceEarnBalance(
+                    matchRequestUrlResult,
+                    notMetHandler,
+                    additionParamsObj
+                  );
+              }
+              if (
+                matchRequestUrlResult &&
+                activeTemplate?.attTemplateID ===
+                  templateIdForBinanceSomeTokenBalance &&
+                targetRequestUrl.includes(
+                  templateIdForBinanceSomeTokenBalanceRequestUrl
+                )
+              ) {
+                isTargetUrl =
+                  await checkTargetRequestFnForBinanceSomeTokenBalance(
+                    matchRequestUrlResult,
+                    notMetHandler,
+                    extendedParamsObj
+                  );
+              }
+
+              if (
+                matchRequestUrlResult &&
+                activeTemplate?.attTemplateID ===
+                  templateIdForOkxSomeTokenBalance &&
+                targetRequestUrl.includes(
+                  templateIdForOkxSomeTokenBalanceRequestUrl
+                )
+              ) {
+                isTargetUrl = await checkTargetRequestFnForOkxSomeTokenBalance(
+                  matchRequestUrlResult,
+                  notMetHandler,
+                  extendedParamsObj
+                );
+              }
+
+              if (
+                matchRequestUrlResult &&
+                activeTemplate?.attTemplateID ===
                   templateIdForCoinstatsSomeTokenBalance
               ) {
                 isTargetUrl =
@@ -1089,6 +1254,62 @@ export const pageDecodeMsgListener = async (
 	        if (dataSource === 'chatgpt') {
 	          await hydrateMissingChatGptRequestsFromTrace(requests);
 	        }
+	        const writeBinanceReadinessDebug = async (extra = {}) => {
+	          if (
+	            !isBinanceDataSourceName(dataSource) &&
+	            !interceptorUrlArr.some(isBinanceTargetUrl)
+	          ) {
+	            return;
+	          }
+	          await chrome.storage.local.set({
+	            kaitoBinanceReadinessDebug: {
+	              at: Date.now(),
+	              dataSource,
+	              targetCount: interceptorRequests.length,
+	              requestCount: Object.keys(requestsMap).length,
+	              targets: interceptorRequests.map((request) => {
+	                const matches = Object.values(requestsMap).filter((requestInfo) => {
+	                  if (
+	                    request.method &&
+	                    requestInfo?.method &&
+	                    String(request.method).toUpperCase() !==
+	                      String(requestInfo.method).toUpperCase()
+	                  ) {
+	                    return false;
+	                  }
+	                  if (binanceRequestMatchesTemplate(requestInfo.url, request)) {
+	                    return true;
+	                  }
+	                  return checkIsRequiredUrl({
+	                    requestUrl: requestInfo.url,
+	                    requiredUrl: request.url,
+	                    urlType: request.urlType,
+	                    queryParams: request.queryParams,
+	                  });
+	                });
+	                return {
+	                  method: request.method || null,
+	                  url: request.url,
+	                  matchCount: matches.length,
+	                  hasTarget: matches.some((item) => item.isTarget === 1),
+	                  hasHeaders: matches.some((item) => !!item.headers),
+	                  hasBody: matches.some((item) => !!item.body),
+	                  methods: [...new Set(matches.map((item) => item.method).filter(Boolean))],
+	                  targetMethods: [
+	                    ...new Set(
+	                      matches
+	                        .filter((item) => item.isTarget === 1)
+	                        .map((item) => item.method)
+	                        .filter(Boolean)
+	                    ),
+	                  ],
+	                };
+	              }),
+	              ...extra,
+	            },
+	          });
+	        };
+
 	        const storageObj = requestsMap;
 	        const storageArr = Object.values(storageObj);
 
@@ -1114,7 +1335,7 @@ export const pageDecodeMsgListener = async (
                   urlType: r.urlType,
                   queryParams: r.queryParams,
                 });
-                return checkRes;
+                return checkRes || binanceRequestMatchesTemplate(rInfo.url, r);
                 // return matchReg(r.url, rInfo.url);
               }
             );
@@ -1146,10 +1367,12 @@ export const pageDecodeMsgListener = async (
 	          let allRequestUrlFoundFlag = false;
 	          if (sdkVersion) {
 	            allRequestUrlFoundFlag = interceptorUrlArr.every((url) => {
+	              const templateRequest = interceptorRequests.find((r) => r.url === url);
 	              const curFlag = Object.values(requestsMap).find((sInfo) => {
 	                if (
 	                  sInfo.isTarget !== 1 ||
-	                  sInfo.templateRequestUrl !== url
+	                  (sInfo.templateRequestUrl !== url &&
+	                    !binanceRequestMatchesTemplate(sInfo.url, templateRequest))
 	                ) {
 	                  return false;
 	                }
@@ -1183,6 +1406,12 @@ export const pageDecodeMsgListener = async (
             fl = f;
           }
 
+	          await writeBinanceReadinessDebug({
+	            captured: captureNum,
+	            basicReady: f,
+	            allTargetsFound: sdkVersion ? !!allRequestUrlFoundFlag : null,
+	            readyBeforeSpecialCase: fl,
+	          });
 	          if (fl) {
             if (dataSource === 'chatgpt') {
               // Two-stage serialization: wait for preAlgorithmFn's offline
@@ -1207,6 +1436,12 @@ export const pageDecodeMsgListener = async (
 	          }
 	          return fl;
 	        } else {
+	          await writeBinanceReadinessDebug({
+	            captured: 0,
+	            basicReady: false,
+	            allTargetsFound: false,
+	            reason: 'not_enough_requests',
+	          });
 	          return false;
 	        }
 	      };
@@ -1446,6 +1681,27 @@ export const pageDecodeMsgListener = async (
             formatRequestResponseFnForTwitch(formatRequests, formatResponse);
           formatRequests = req;
           formatResponse = res;
+        } else if (
+          activeTemplate.attTemplateID === templateIdForBinanceEarnHistory
+        ) {
+          const { formatRequests: req, formatResponse: res } =
+            formatRequestResponseFnForBinanceEarnHistory(
+              formatRequests,
+              formatResponse
+            );
+          formatRequests = req;
+          formatResponse = res;
+        } else if (
+          activeTemplate.attTemplateID ===
+          templateIdForBinanceEarnHistoryABalance
+        ) {
+          const { formatRequests: req, formatResponse: res } =
+            formatRequestResponseFnForBinanceEarnHistoryABalance(
+              formatRequests,
+              formatResponse
+            );
+          formatRequests = req;
+          formatResponse = res;
         } else if (activeTemplate.attTemplateID === templateIdForPhalaAccount) {
           const { formatRequests: req, formatResponse: res } =
             formatRequestResponseFnForPhalaAccount(
@@ -1467,6 +1723,37 @@ export const pageDecodeMsgListener = async (
         } else if (activeTemplate.attTemplateID === templateIdForPhalaCvmList) {
           const { formatRequests: req, formatResponse: res } =
             formatRequestResponseFnForPhalaCvmList(
+              formatRequests,
+              formatResponse
+            );
+          formatRequests = req;
+          formatResponse = res;
+        } else if (
+          activeTemplate.attTemplateID ===
+          templateIdForReputationPhalaBinanceEarnBalance
+        ) {
+          const { formatRequests: req, formatResponse: res } =
+            formatRequestResponseFnForReputationPhalaBinanceEarnBalance(
+              formatRequests,
+              formatResponse
+            );
+          formatRequests = req;
+          formatResponse = res;
+        } else if (
+          activeTemplate.attTemplateID === templateIdForBinanceSomeTokenBalance
+        ) {
+          const { formatRequests: req, formatResponse: res } =
+            formatRequestResponseFnForBinanceSomeTokenBalance(
+              formatRequests,
+              formatResponse
+            );
+          formatRequests = req;
+          formatResponse = res;
+        } else if (
+          activeTemplate.attTemplateID === templateIdForOkxSomeTokenBalance
+        ) {
+          const { formatRequests: req, formatResponse: res } =
+            formatRequestResponseFnForOkxSomeTokenBalance(
               formatRequests,
               formatResponse
             );
@@ -1503,6 +1790,11 @@ export const pageDecodeMsgListener = async (
         PADOSERVERURL,
         padoExtensionVersion,
       });
+      if (schemaType?.startsWith('OKX_TOKEN_HOLDING')) {
+        aligorithmParams.requests[2].url =
+          aligorithmParams.requests[2].url.replace('limit=5', 'limit=100');
+      }
+
       formatAlgorithmParams = aligorithmParams;
       await chrome.storage.local.set({
         kaitoFormatAlgorithmParamsDebug:
@@ -1862,6 +2154,9 @@ export const pageDecodeMsgListener = async (
             templateRequestUrl,
             type: details.type, // type: "main_frame"
           };
+          if (isBinanceDataSourceName(dataSource) || isBinanceTargetUrl(currRequestUrl)) {
+            newCapturedInfo.isTarget = 1;
+          }
           if (addQueryStr) {
             newCapturedInfo.queryString = addQueryStr;
           }
@@ -2086,6 +2381,128 @@ export const pageDecodeMsgListener = async (
         },
       });
       console.log('pageDecode dataSourcePageTabId:', dataSourcePageTabId);
+      const triggerBinanceCachedRequestsFn = async () => {
+        if (!isBinanceDataSourceName(dataSource)) {
+          return;
+        }
+        try {
+          const [result] = await chrome.scripting.executeScript({
+            target: { tabId: dataSourcePageTabId },
+            world: 'MAIN',
+            func: () => {
+              const replay = window.__kaitoReplayBinanceSignedRequests;
+              return typeof replay === 'function' ? replay() : -1;
+            },
+          });
+          await chrome.storage.local.set({
+            kaitoBinanceReplayDebug: {
+              at: Date.now(),
+              tabId: dataSourcePageTabId,
+              replayed: result?.result ?? null,
+            },
+          });
+        } catch (error) {
+          await chrome.storage.local.set({
+            kaitoBinanceReplayDebug: {
+              at: Date.now(),
+              tabId: dataSourcePageTabId,
+              error: error?.message || String(error),
+            },
+          });
+        }
+      };
+      const hydrateBinanceCachedRequestsFn = async () => {
+        if (!isBinanceDataSourceName(dataSource)) {
+          return;
+        }
+        try {
+          const [result] = await chrome.scripting.executeScript({
+            target: { tabId: dataSourcePageTabId },
+            world: 'MAIN',
+            func: () => {
+              const snapshot = window.__kaitoGetBinanceSignedRequestSnapshot;
+              return typeof snapshot === 'function' ? snapshot() : [];
+            },
+          });
+          const cachedRequests = Array.isArray(result?.result)
+            ? result.result
+            : [];
+          const targetRequests = requests.filter((r) => r.name !== 'first');
+          const existingBinanceHeaders =
+            Object.values(requestsMap).find(
+              (requestInfo) =>
+                isBinanceTargetUrl(requestInfo?.url) &&
+                requestInfo?.headers &&
+                (requestInfo.headers.Cookie || requestInfo.headers.cookie)
+            )?.headers ||
+            Object.values(requestsMap).find(
+              (requestInfo) =>
+                isBinanceTargetUrl(requestInfo?.url) && requestInfo?.headers
+            )?.headers ||
+            {};
+          let hydrated = 0;
+
+          for (const templateRequest of targetRequests) {
+            const cachedRequest = cachedRequests.find((requestInfo) => {
+              if (
+                templateRequest?.method &&
+                requestInfo?.method &&
+                String(templateRequest.method).toUpperCase() !==
+                  String(requestInfo.method).toUpperCase()
+              ) {
+                return false;
+              }
+              return (
+                binanceRequestMatchesTemplate(requestInfo.url, templateRequest) ||
+                checkIsRequiredUrl({
+                requestUrl: requestInfo.url,
+                requiredUrl: templateRequest.url,
+                urlType: templateRequest.urlType,
+                queryParams: templateRequest.queryParams,
+                })
+              );
+            });
+            if (!cachedRequest?.url) {
+              continue;
+            }
+
+            const syntheticRequestId = `kaito-binance-cache-${hydrated}-${Date.now()}`;
+            storeRequestsMap(syntheticRequestId, {
+              headers: {
+                ...cachedRequest.headers,
+                ...existingBinanceHeaders,
+              },
+              method: cachedRequest.method || templateRequest.method || 'GET',
+              url: cachedRequest.url,
+              requestId: syntheticRequestId,
+              templateRequestUrl: templateRequest.url,
+              type: 'xmlhttprequest',
+              isTarget: 1,
+              ...(cachedRequest.body !== undefined
+                ? { body: cachedRequest.body }
+                : {}),
+            });
+            hydrated += 1;
+          }
+
+          await chrome.storage.local.set({
+            kaitoBinanceCacheHydrationDebug: {
+              at: Date.now(),
+              tabId: dataSourcePageTabId,
+              cachedCount: cachedRequests.length,
+              hydrated,
+            },
+          });
+        } catch (error) {
+          await chrome.storage.local.set({
+            kaitoBinanceCacheHydrationDebug: {
+              at: Date.now(),
+              tabId: dataSourcePageTabId,
+              error: error?.message || String(error),
+            },
+          });
+        }
+      };
       const injectFn = async () => {
         await chrome.scripting.executeScript({
           target: {
@@ -2130,6 +2547,12 @@ export const pageDecodeMsgListener = async (
         }
         const isChatgptDataSource =
           String(activeTemplate?.dataSource || '').toLowerCase() === 'chatgpt';
+	        const isBinanceDataSource =
+	          isBinanceDataSourceName(activeTemplate?.dataSource) ||
+	          targetRequests.some((request) => isBinanceTargetUrl(request.url));
+        if (isBinanceDataSource) {
+          return;
+        }
         await chrome.scripting.executeScript({
           target: {
             tabId: dataSourcePageTabId,
@@ -2172,7 +2595,7 @@ export const pageDecodeMsgListener = async (
               .map((request) => {
                 const expression = request.url;
                 // Prefer the actual URL the page already fetched (resource
-                // timing): it carries required query params
+                // timing): it carries required query params (e.g. Lighter's
                 // ?by=&value=) that normalizeLiteralUrl strips off the regex,
                 // leaving a bare URL the endpoint rejects. Fall back to literal.
                 const matchedUrl = [...resources]
@@ -2283,7 +2706,7 @@ export const pageDecodeMsgListener = async (
             for (const request of urls) {
               // Cookies first (session-scoped endpoints need them); on failure
               // retry without. Public endpoints that reply Access-Control-Allow-
-              // Origin: * reject a credentialed cross-origin fetch,
+              // Origin: * (e.g. Lighter) reject a credentialed cross-origin fetch,
               // so credentials:'include' fails even though the data is public.
               for (const credentials of ['include', 'omit']) {
                 try {
@@ -2348,6 +2771,8 @@ export const pageDecodeMsgListener = async (
       } else {
         await injectFn();
       }
+      await triggerBinanceCachedRequestsFn();
+      await hydrateBinanceCachedRequestsFn();
       await checkWebRequestIsReadyFn();
     }
     if (name === 'initCompleted') {

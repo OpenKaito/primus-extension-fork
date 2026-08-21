@@ -370,6 +370,28 @@ const AchievementTaskItem: React.FC<TaskItemWithClick> = memo(
         };
       }
 
+      if (taskItem.taskIdentifier === 'CONNECT_BYBIT_DATA') {
+        const res = await getDataSourceData('bybit');
+        if (!res['bybit']) {
+          const msgId = addMsg({
+            type: 'info',
+            title: 'Data not connected',
+            desc: 'Go to Data Source page to connect.',
+            link: '/datas/data?dataSourceId=bybit',
+            linkText: 'To connect',
+          });
+          setTimeout(() => {
+            deleteMsg(msgId);
+          }, MSGSHOWTIME1);
+          return;
+        }
+        const bitgetUserInfo = JSON.parse(res['bybit']);
+        console.log(res);
+        ext = {
+          uniqueName: bitgetUserInfo.userInfo.userName,
+        };
+      }
+
       if (taskItem.taskIdentifier === 'CONNECT_KUCOIN_DATA') {
         const res = await getDataSourceData('kucoin');
         if (!res['kucoin']) {
@@ -759,6 +781,33 @@ const AchievementTaskItem: React.FC<TaskItemWithClick> = memo(
         };
       }
 
+      if (taskItem.taskIdentifier == 'CONNECT_BINANCE_DATA') {
+        const res = await getDataSourceData('binance');
+        if (!res['binance']) {
+          const msgId = addMsg({
+            type: 'info',
+            title: 'Data not connected',
+            desc: 'Go to Data Source page to connect.',
+            link: '/datas/data?dataSourceId=binance',
+            linkText: 'To connect',
+          });
+          setTimeout(() => {
+            deleteMsg(msgId);
+          }, MSGSHOWTIME1);
+          return;
+        }
+        const binanceInfo = JSON.parse(res['binance']);
+        if (binanceInfo.userInfo) {
+          ext = {
+            uniqueName: binanceInfo.userInfo,
+          };
+        } else {
+          ext = {
+            uniqueName: 'binance',
+          };
+        }
+      }
+
       if (taskItem.taskIdentifier == 'CONNECT_COINBASE_DATA') {
         const res = await getDataSourceData('coinbase');
         if (!res['coinbase']) {
@@ -782,6 +831,33 @@ const AchievementTaskItem: React.FC<TaskItemWithClick> = memo(
         } else {
           ext = {
             uniqueName: 'coinbase',
+          };
+        }
+      }
+
+      if (taskItem.taskIdentifier === 'CONNECT_OKX_DATA') {
+        const res = await getDataSourceData('okx');
+        if (!res['okx']) {
+          const msgId = addMsg({
+            type: 'info',
+            title: 'Data not connected',
+            desc: 'Go to Data Source page to connect.',
+            link: '/datas/data?dataSourceId=okx',
+            linkText: 'To connect',
+          });
+          setTimeout(() => {
+            deleteMsg(msgId);
+          }, MSGSHOWTIME1);
+          return;
+        }
+        const okxInfo = JSON.parse(res['okx']);
+        if (okxInfo.userInfo) {
+          ext = {
+            uniqueName: okxInfo.userInfo,
+          };
+        } else {
+          ext = {
+            uniqueName: 'okx',
           };
         }
       }

@@ -62,7 +62,7 @@ export async function customFetch2({ url, method, body, header, isFormData }) {
   }
 
   // Try with cookies first (session-scoped endpoints need them). Public
-  // endpoints that reply Access-Control-Allow-Origin: * reject a
+  // endpoints that reply Access-Control-Allow-Origin: * (e.g. Lighter) reject a
   // credentialed cross-origin fetch in the browser, so retry without
   // credentials on failure. This is the fetch that validates the target
   // response for readiness (extraRequestFn2), so it MUST succeed for such

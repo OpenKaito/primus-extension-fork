@@ -3,6 +3,7 @@ var webpack = require('webpack'),
   fileSystem = require('fs-extra'),
   env = require('./utils/env'),
   CopyWebpackPlugin = require('copy-webpack-plugin'),
+  HtmlWebpackPlugin = require('html-webpack-plugin'),
   TerserPlugin = require('terser-webpack-plugin');
 var { CleanWebpackPlugin } = require('clean-webpack-plugin');
 var ReactRefreshWebpackPlugin = require('@pmmmwh/react-refresh-webpack-plugin');
@@ -34,6 +35,7 @@ const isDevelopment = process.env.NODE_ENV !== 'production';
 var options = {
   mode: process.env.NODE_ENV || 'development',
   entry: {
+    home: path.join(__dirname, 'src', 'pages', 'Home', 'index.jsx'),
     background: path.join(__dirname, 'src', 'pages', 'Background', 'index.js'),
     pageDecode: path.join(
       __dirname,
@@ -270,6 +272,11 @@ var options = {
           force: true,
         },
         {
+          from: 'src/services/algorithms/ccxt.browser.min.js',
+          to: path.join(__dirname, 'build'),
+          force: true,
+        },
+        {
           from: 'src/services/algorithms/client_plugin.data',
           to: path.join(__dirname, 'build'),
           force: true,
@@ -335,7 +342,17 @@ var options = {
           force: true,
         },
         {
+          from: 'src/assets/img/iconDataSourceBinance.svg',
+          to: path.join(__dirname, 'build'),
+          force: true,
+        },
+        {
           from: 'src/assets/img/iconDataSourceCoinbase.png',
+          to: path.join(__dirname, 'build'),
+          force: true,
+        },
+        {
+          from: 'src/assets/img/iconDataSourceOKX.svg',
           to: path.join(__dirname, 'build'),
           force: true,
         },
@@ -382,6 +399,12 @@ var options = {
       ],
     }),
 
+    new HtmlWebpackPlugin({
+      template: path.join(__dirname, 'src', 'pages', 'Home', 'index.html'),
+      filename: 'home.html',
+      chunks: ['home'],
+      cache: false,
+    }),
     new FriendlyErrorsWebpackPlugin(),
     new webpack.ProvidePlugin({
       process: 'process/browser.js',

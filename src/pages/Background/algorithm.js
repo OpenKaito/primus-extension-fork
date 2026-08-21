@@ -405,6 +405,21 @@ export const algorithmMsgListener = async (
                   desc: attestTipMap[errorCode].desc,
                   sourcePageTip: attestTipMap[errorCode].title,
                 });
+              } else if (
+                activeAttestationParams?.verificationContent ===
+                  'Assets Proof' &&
+                activeAttestationParams?.dataSourceId === 'binance'
+              ) {
+                let type, desc, title;
+                errorCode = '00102';
+                type = attestTipMap[errorCode].type;
+                desc = attestTipMap[errorCode].desc;
+                title = attestTipMap[errorCode].title;
+                Object.assign(msgObj, {
+                  type,
+                  desc,
+                  sourcePageTip: title,
+                });
               } else {
                 errorCode = '00104';
                 Object.assign(msgObj, {

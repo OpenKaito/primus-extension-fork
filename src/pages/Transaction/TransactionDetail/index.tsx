@@ -2,6 +2,7 @@ import React, { useState, useEffect, memo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { getAttestInfoByEncodeDdata } from '@/services/chains/eas';
+import iconBinance from '@/assets/img/iconBinance.png';
 import type { UserState } from '@/types/store';
 
 import './index.sass';
@@ -59,7 +60,9 @@ const TransactionDetail = memo(() => {
 
   return (
     <div className="pageTransactionDetail">
-      <h1>Attestation Details</h1>
+      <h1>
+        Attestation Details <img src={iconBinance} alt="" />
+      </h1>
       <p>
         <span>Created Time:</span>
         <span>May 23, 2023</span>
