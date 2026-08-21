@@ -1,13 +1,10 @@
 import iconPolygon from '@/assets/img/iconPolygon.png';
 import iconArbitrum from '@/assets/img/iconArbitrum.svg';
-import iconBinance from '@/assets/img/iconBinance.png';
+import iconNetwork3 from '@/assets/img/iconNetwork3.png';
 import iconUpChainEthereum from '@/assets/img/iconUpChainEthereum.png';
 import { getAlgoUrl } from '@/services/api/algorithm';
 import iconNetworkLinea from '@/assets/img/credit/iconNetworkLinea.png';
 import iconNetworkScroll from '@/assets/img/credit/iconNetworkScroll.svg';
-import { postMsg } from '@/utils/utils';
-import store from '@/store';
-import type { UserState } from '@/types/store';
 type ENVTYPE = 'development' | 'test' | 'production';
 
 const DEFAULT_ENV: ENVTYPE = 'development';
@@ -183,9 +180,9 @@ const EASINFOMAP = {
     },
     BSC: {
       showName: 'BNB Chain',
-      icon: iconBinance,
+      icon: iconNetwork3,
       title: 'BSC',
-      rpcUrl: 'https://data-seed-prebsc-1-s3.binance.org:8545/',
+      rpcUrl: 'https://bsc-testnet-dataseed.bnbchain.org/',
       easContact: '0xBF4221C5f98349FACbB28D0ea7bbc57a6834Bfe1',
       easProxyFeeContract: '0x620e84546d71A775A82491e1e527292e94a7165A',
       schemas: {
@@ -204,7 +201,7 @@ const EASINFOMAP = {
       },
       chainId: '0x61', // 97
       chainName: 'BNB Smart Chain Testnet',
-      rpcUrls: ['https://data-seed-prebsc-1-s3.binance.org:8545/'],
+      rpcUrls: ['https://bsc-testnet-dataseed.bnbchain.org/'],
       blockExplorerUrls: ['https://testnet.bscscan.com/'],
       nativeCurrency: {
         name: 'BNB',
@@ -215,7 +212,7 @@ const EASINFOMAP = {
     },
     'BNB Greenfield': {
       showName: 'BNB Greenfield',
-      icon: iconBinance,
+      icon: iconNetwork3,
       title: 'BNB Greenfield',
       rpcUrl: 'https://gnfd-testnet-fullnode-tendermint-us.bnbchain.org',
       easContact: '0x6c2270298b1e6046898a322acB3Cbad6F99f7CBD',
@@ -249,7 +246,7 @@ const EASINFOMAP = {
     },
     opBNB: {
       showName: 'opBNB',
-      icon: iconBinance,
+      icon: iconNetwork3,
       title: 'opBNB',
       rpcUrl: 'https://opbnb-testnet-rpc.bnbchain.org',
       easContact: '0x9A14ff83C1ED71407C00358D6dF98870DD1936f7',
@@ -398,10 +395,10 @@ const EASINFOMAP = {
     },
     BNB: {
       showName: 'BNB',
-      icon: iconBinance,
+      icon: iconNetwork3,
       title: 'BNB',
       disabled: true,
-      rpcUrl: 'https://data-seed-prebsc-1-s3.binance.org:8545/',
+      rpcUrl: 'https://bsc-testnet-dataseed.bnbchain.org/',
       easContact: '0xBF4221C5f98349FACbB28D0ea7bbc57a6834Bfe1',
       easProxyContrac: '0x2884E43B48c2Cc623A19c0c3d260DD8f398fd5F3',
       schemas: {
@@ -421,7 +418,7 @@ const EASINFOMAP = {
       },
       chainId: '0x61', // numToHex
       chainName: 'BNB Smart Chain Testnet',
-      rpcUrls: ['https://data-seed-prebsc-1-s3.binance.org:8545/'],
+      rpcUrls: ['https://bsc-testnet-dataseed.bnbchain.org/'],
       blockExplorerUrls: ['https://testnet.bscscan.com/'],
     },
   },
@@ -471,9 +468,9 @@ const EASINFOMAP = {
     },
     BSC: {
       showName: 'BNB Chain',
-      icon: iconBinance,
+      icon: iconNetwork3,
       title: 'BSC',
-      rpcUrl: 'https://bsc-dataseed.binance.org/',
+      rpcUrl: 'https://bsc-dataseed.bnbchain.org/',
       easContact: '0x247Fe62d887bc9410c3848DF2f322e52DA9a51bC',
       easProxyFeeContract: '0x70e8E6c3c90e17905F9326A3Cc4bFF5a4637705E',
       schemas: {
@@ -498,7 +495,7 @@ const EASINFOMAP = {
       },
       chainId: '0x38', // 56
       chainName: 'BNB Chain',
-      rpcUrls: ['https://bsc-dataseed.binance.org/'],
+      rpcUrls: ['https://bsc-dataseed.bnbchain.org/'],
       blockExplorerUrls: ['https://bscscan.com/'],
       nativeCurrency: {
         name: 'BNB',
@@ -509,7 +506,7 @@ const EASINFOMAP = {
     },
     opBNB: {
       showName: 'opBNB',
-      icon: iconBinance,
+      icon: iconNetwork3,
       title: 'opBNB',
       rpcUrl: 'https://opbnb-mainnet-rpc.bnbchain.org',
       easContact: '0x9A14ff83C1ED71407C00358D6dF98870DD1936f7',
@@ -623,7 +620,7 @@ const EASINFOMAP = {
 
     'BNB Greenfield': {
       showName: 'BNB Greenfield',
-      icon: iconBinance,
+      icon: iconNetwork3,
       title: 'BNB Greenfield',
       rpcUrl: 'https://greenfield-chain.bnbchain.org',
       easContact: '0x247Fe62d887bc9410c3848DF2f322e52DA9a51bC',
@@ -754,13 +751,6 @@ export const updateAlgoUrl = async () => {
               algorithmUrl: JSON.stringify(jsonobj),
             });
             isInited = true;
-            const padoServicePort = (store.getState() as UserState)
-              .padoServicePort;
-            postMsg(padoServicePort, {
-              fullScreenType: 'algorithm',
-              reqMethodName: 'lineaEventStartOffline',
-              params: {},
-            });
           }
         }
         ws.close();

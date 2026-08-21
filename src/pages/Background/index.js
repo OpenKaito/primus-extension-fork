@@ -15,13 +15,7 @@ import {
   SocailStoreVersion,
   padoExtensionVersion,
 } from '@/config/constants';
-import {
-  default as processExReq,
-  clear,
-  assembleAlgorithmParams,
-  resetExchangesCipher,
-  EXCHANGEINFO,
-} from './exData';
+import { assembleAlgorithmParams } from './exData';
 import { eventReport } from '@/services/api/usertracker';
 import './pageDecode/index.js';
 import { pageDecodeMsgListener } from './pageDecode/index.js';
@@ -86,7 +80,6 @@ const creatUserInfo = async () => {
 };
 chrome.runtime.onInstalled.addListener(async ({ reason, version }) => {
   if (reason === chrome.runtime.OnInstalledReason.INSTALL) {
-    // showIndex();
     creatUserInfo();
     const eventInfo = {
       eventType: 'EXTENSION_INSTALL',
@@ -100,15 +93,6 @@ chrome.runtime.onInstalled.addListener(async ({ reason, version }) => {
     await chrome.storage.local.remove(['activeRequestAttestation']);
   }
 });
-
-chrome.action.onClicked.addListener((tab) => {
-  showIndex();
-});
-
-const showIndex = (info, tab) => {
-  let url = chrome.runtime.getURL('home.html');
-  chrome.tabs.create({ url });
-};
 
 // listen msg from extension tab page
 chrome.runtime.onConnect.addListener((port) => {
@@ -124,9 +108,6 @@ const processFullscreenReq = (message, port) => {
   switch (message.fullScreenType) {
     case 'padoService':
       processpadoServiceReq(message, port);
-      break;
-    case 'networkreq':
-      processExReq(message, port, USERPASSWORD);
       break;
     case 'wallet':
       processWalletReq(message, port);
@@ -271,12 +252,6 @@ const processAlgorithmReq = async (message, port) => {
       await chrome.storage.local.set({
         activeRequestAttestation: JSON.stringify(f),
       });
-      if (
-        attestationParams.source === 'binance' &&
-        process.env.NODE_ENV === 'production'
-      ) {
-        attestationParams.proxyUrl = 'wss://api2.padolabs.org/algoproxy';
-      }
       try {
         const appSignParameters =
           attestationParams?.appParameters?.appSignParameters
@@ -309,7 +284,6 @@ const processAlgorithmReq = async (message, port) => {
         type: 'algorithm',
         method: 'getAttestation',
         params: attestationParams,
-        exInfo: EXCHANGEINFO,
       });
       break;
     case 'getAttestationResult':
@@ -558,7 +532,6 @@ const processWalletReq = async (message, port) => {
       break;
     case 'clearUserPassword':
       USERPASSWORD = '';
-      clear();
       web3EthAccount = null;
       break;
     case 'queryUserPassword':
@@ -606,14 +579,12 @@ const processWalletReq = async (message, port) => {
               });
             }
           }
-          await resetExchangesCipher(USERPASSWORD, password);
           USERPASSWORD = password;
           postMsg(port, { resMethodName: reqMethodName, res: true });
         } catch {
           postMsg(port, { resMethodName: reqMethodName, res: false });
         }
       }
-      // refresh exchange cipher
       break;
     default:
       break;

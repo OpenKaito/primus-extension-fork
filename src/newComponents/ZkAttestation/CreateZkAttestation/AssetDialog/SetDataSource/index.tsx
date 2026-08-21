@@ -22,9 +22,7 @@ const SetPwdDialog: React.FC<SetPwdDialogProps> = memo(({ onSubmit }) => {
     onSubmit(dataSourceName);
   }, [formLegal, dataSourceName]);
   const tList = useMemo(() => {
-    // const sourceNameArr = ['binance', 'okx', 'coinbase'];
-    // const sourceNameArr = ['binance', 'okx', 'bitget', 'bybit'];
-    const sourceNameArr = ['binance', 'okx', 'bybit'];
+    const sourceNameArr = ['coinbase', 'bitget'];
     const newArr = sourceNameArr.map((i) => {
       const metaInfo = DATASOURCEMAP[i];
       const isDisabled = i==='coinbase' && !sourceMap2[i];

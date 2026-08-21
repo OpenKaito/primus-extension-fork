@@ -48,20 +48,6 @@ const ZkAttestation = memo(() => {
           verificationContent: 'Account ownership',
           verificationValue: 'Account owner',
         };
-      } else if (presetDataSourceId === 'binance') {
-        attType = 'Humanity Verification';
-        presetObj = {
-          dataSourceId: 'binance',
-          verificationContent: 'Account ownership',
-          verificationValue: 'Account owner',
-        };
-      } else if (presetDataSourceId === 'okx') {
-        attType = 'Humanity Verification';
-        presetObj = {
-          dataSourceId: 'okx',
-          verificationContent: 'KYC Status',
-          verificationValue: 'Basic Verification',
-        };
       }
       if (attType && presetObj) {
         setVisibleAssetDialog(attType);

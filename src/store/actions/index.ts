@@ -47,8 +47,6 @@ import type { PROOFTYPEITEM } from '@/types/cred';
 import iconOpenSea from '@/assets/img/events/iconOpenSea.svg';
 
 export type DataSourceStorages = {
-  binance?: any;
-  okx?: any;
   kucoin?: any;
   x?: any;
   coinbase?: any;

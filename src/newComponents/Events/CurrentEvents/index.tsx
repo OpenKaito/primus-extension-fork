@@ -6,7 +6,6 @@ import {
   LINEAEVENTNAME,
   ETHSIGNEVENTNAME,
 } from '@/config/events';
-import iconDataSourceBinance from '@/assets/img/iconDataSourceBinance.svg';
 import iconNetworkLinea from '@/assets/img/credit/iconNetworkLinea.svg';
 import iconEventPartnerSign from '@/assets/newImg/events/iconEventPartnerSign.svg';
 import './index.scss';
@@ -26,7 +25,7 @@ const Cards: React.FC<PDropdownProps> = memo(({}) => {
         picTxt: 'The Linea Voyage Proof of Humanity',
 
         title: 'The Linea Voyage: Proof of Humanity',
-        desc: 'Complete an attestation with a KYCed account on Binance.',
+        desc: 'Complete an identity attestation.',
         points: [
           {
             pointIconFont: 'icon-iconBlockChain',
@@ -39,7 +38,7 @@ const Cards: React.FC<PDropdownProps> = memo(({}) => {
       {
         id: BASEVENTNAME,
         combineType: '1',
-        parterIcon: iconDataSourceBinance,
+        parterIcon: iconEventPartnerSign,
 
         periodType: '1',
 

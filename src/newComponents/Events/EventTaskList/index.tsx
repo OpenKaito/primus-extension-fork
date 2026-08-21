@@ -81,7 +81,7 @@ const lineaTaskMap: { [propName: string]: StepItem } = {
   },
   attestation: {
     id: 'attestation',
-    title: 'Complete an attestation with a KYCed account on Binance',
+    title: 'Complete an identity attestation',
 
     finished: false,
     tasksProcess: {
@@ -350,11 +350,10 @@ const DataSourceItem = memo(() => {
     let attestation = {};
     if (eventId === LINEAEVENTNAME) {
       attestation = {
-        '1': 0, // binance kyc (web tempalte id:1)
+        '1': 0,
       };
     } else if (eventId === BASEVENTNAME) {
       attestation = {
-        2: 0, // biance account
         6: 0, // tiktok account
         100: 0, // google account
         3: 0, //  x account

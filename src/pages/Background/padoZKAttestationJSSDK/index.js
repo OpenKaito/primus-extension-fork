@@ -701,7 +701,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
             // change verification value
             lastResponseConditions.value =
               activeAttestationParams.verificationValue;
-            // for okx
+            // Keep the captured request URL for templates that include query data.
             if (lastResponseConditionsSubconditions) {
               const lastSubCondition =
                 lastResponseConditionsSubconditions[

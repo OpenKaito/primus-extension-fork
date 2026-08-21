@@ -1,6 +1,5 @@
 import iconNetworkScroll from '@/assets/img/credit/iconNetworkScroll.svg';
 
-import iconDataSourceBinance from '@/assets/img/iconDataSourceBinance.svg';
 import iconNetworkLinea from '@/assets/img/credit/iconNetworkLinea.svg';
 import iconEventPartnerSign from '@/assets/newImg/events/iconEventPartnerSign.svg';
 
@@ -22,7 +21,7 @@ export const EVENTNAMEMAP = {
 export const eventMetaMap = {
   [BASEVENTNAME]: {
     combineType: '1',
-    icon: iconDataSourceBinance,
+    icon: iconEventPartnerSign,
     title: 'BNBChain Attestation Alliance',
     longDesc:
       'The BNB Attestation Service (BAS) is an infrastructure built on the BNB ecosystem for generating attestation to verify information. BAS assists users in on-chain or off-chain verification, allowing them to assert ownership of attestation by storing them in Greenfield.',
@@ -49,7 +48,6 @@ export const eventMetaMap = {
         discord: 0,
       },
       attestation: {
-        2: 0, // biance account
         6: 0, // tiktok account
         100: 0, // google account
         3: 0, //  x account
@@ -78,7 +76,7 @@ export const eventMetaMap = {
 
     nameInAttestation: 'Linea voyage specific',
     picTxt: 'The Linea Voyage Proof of Humanity',
-    desc: 'Complete an attestation with a KYCed account on Binance.',
+    desc: 'Complete an identity attestation.',
 
     chainIds: ['Linea Goerli'],
     taskMap: {
@@ -110,7 +108,6 @@ export const eventMetaMap = {
   },
   [EARLYBIRDNFTEVENTNAME]: {
     combineType: '0',
-    // icon: iconDataSourceBinance,
     title: 'Early Bird NFT Rewards',
     longDesc:
       'For trying things out, make attestation, submit it to Linea, and share your referral code. This will grant you the eligibility to mint the early bird NFT.',

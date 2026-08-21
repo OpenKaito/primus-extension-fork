@@ -25,7 +25,7 @@ export async function testeas() {
   //console.log("testhash2=", ethereumjsUtil.bufferToHex(testhash2));
 
   let schemadata = {
-    source: 'okx',
+    source: 'web',
     sourceUseridHash: '',
     authUseridHash:
       '0x1234567890123456789012345678901234567890123456789012345678901234',

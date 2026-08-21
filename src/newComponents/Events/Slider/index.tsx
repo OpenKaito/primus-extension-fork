@@ -32,7 +32,7 @@ const eventIntroMap = {
   //   id: LINEAEVENTNAME,
   //   title: 'The Linea Voyage: Proof of Humanity',
   //   desc: [
-  //     'Complete an attestation with a KYCed account on Binance.',
+  //     'Complete an identity attestation.',
   //     'Bringing more PoH attestations to Verax and Linea ecosystem!',
   //   ],
   //   points: [

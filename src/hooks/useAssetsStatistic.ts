@@ -304,8 +304,8 @@ const useAssetsStatistic = function () {
     },
     [totalAssetsBalance]
   );
-  const tokenIconFn = useCallback((j, sourceId = 'binance') => {
-    let source = 'binance';
+  const tokenIconFn = useCallback((j, sourceId = 'coinbase') => {
+    let source = 'coinbase';
     if (!sourceId.startsWith('0x')) {
       source = sourceId;
     }

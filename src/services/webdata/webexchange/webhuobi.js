@@ -26,7 +26,7 @@ class WebHuoBi extends WebExchange {
             this.tradingAccountTokenAmountObj[currency.toUpperCase()] = balance;
         });
         // console.log(
-        //   'okx tradingAccountTokenAmountMap',
+        //   'tradingAccountTokenAmountMap',
         //   this.tradingAccountTokenAmountMap
         // );
         return this.tradingAccountTokenAmountMap;
@@ -35,7 +35,7 @@ class WebHuoBi extends WebExchange {
     async getTokenPriceMap() {
         await this.getTotalHoldingTokenSymbolList();
         // transfrom 'X' to 'XUSDT' when you query X's price;
-        // ex: ETH => ETHUSDT,// binance=>'ETHUSDT',others:'ETH-USDT'
+        // Convert symbols to the market pair format used by the source.
         // price unit: USD
         // coninbase need filter USD
         let LPSymbols = this.totalHoldingTokenSymbolList

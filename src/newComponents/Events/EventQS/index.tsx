@@ -56,38 +56,6 @@ const lineaQsMap = {
       'As the attestation is undergoing the zkTLS process, it often depends on your internet connection. A quick solution is to connect to a new wifi network or switch to a different VPN node, if possible. If you receive an error message with an error code, feel free to contact us in the Discord #help channel.',
     // expand: true,
   },
-  3: {
-    id: 3,
-    question:
-      'What does the “not meet the uniqueness requirement” error message mean?',
-    answer: (
-      <>
-        Due to Linea’s requirements, each Binance KYC'ed account should be
-        linked to only one wallet address. If you encounter this error message,
-        it could mean either:
-        <ul className="subReasonItems">
-          <li>
-            <i className="dot"></i>
-            Your Binance account is already linked to a different wallet
-            address.
-          </li>
-          <li>
-            <i className="dot"></i>
-            Your currently connected wallet address is already linked to another
-            Binance account through attestation.
-          </li>
-        </ul>
-      </>
-    ),
-    // expand: true,
-  },
-  4: {
-    id: 4,
-    question: 'Can I join this event with a different wallet address? ',
-    answer:
-      'No, you cannot use another wallet address to join this event. As Linea requires an uniqueness Binance account binding requirement, only one Binance account can bind to one wallet address during the attestation process. If you have already complete this event using one wallet address, you will see “Not meet the uniqueness requirement” error message while using a different wallet address to join this event again.',
-    // expand: true,
-  },
   // 5: {
   //   id: 5,
   //   question: 'How are Primus points for this event counted?',

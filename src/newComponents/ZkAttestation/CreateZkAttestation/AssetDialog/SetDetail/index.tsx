@@ -62,15 +62,7 @@ const SetPwdDialog: React.FC<SetPwdDialogProps> = memo(
     );
     const sysConfig = useSelector((state: UserState) => state.sysConfig);
     const verificationValueTooltip = useMemo(() => {
-      if (pswForm.verificationContent === 'Token Holding') {
-        if (presets.dataSourceId === 'binance') {
-          return 'Tokens in Spot account';
-        } else {
-          return '';
-        }
-      } else {
-        return '';
-      }
+      return '';
     }, [pswForm.verificationContent, presets.dataSourceId]);
     const verificationContentCN = useMemo(() => {
       let cN = 'verificationContent';
@@ -97,7 +89,7 @@ const SetPwdDialog: React.FC<SetPwdDialogProps> = memo(
           (i) => ASSETSVERIFICATIONCONTENTTYPEEMAP[i]
         );
         return list;
-      } else if (['bitget', 'bybit'].includes(dataSourceId)) {
+      } else if (dataSourceId === 'bitget') {
         supportedContentIdArr = ['Spot 30-Day Trade Vol'];
         let list = supportedContentIdArr.map(
           (i) => ASSETSVERIFICATIONCONTENTTYPEEMAP[i]
@@ -118,43 +110,15 @@ const SetPwdDialog: React.FC<SetPwdDialogProps> = memo(
       } else if (pswForm.verificationContent === 'Token Holding') {
         if (activeDataSouceUserInfo) {
           let symbolList: any[] = [];
-          if (dataSourceId === 'okx') {
-            symbolList = Object.values(
-              activeDataSouceUserInfo.tokenListMap
-            ).map((i: any) => i.symbol);
-          } else if (dataSourceId === 'binance') {
-            symbolList = Object.keys(
-              activeDataSouceUserInfo.tradingAccountFreeTokenAmountObj
-            ).filter((t) => {
-              const curVal = mul(
-                Number(
-                  activeDataSouceUserInfo.tradingAccountFreeTokenAmountObj[t]
-                ),
-                activeDataSouceUserInfo.tokenPriceMap[t]
-              ).toFixed();
-              const f = gt(Number(curVal), 0.01);
-              return f;
-            });
-            // symbolList = Object.keys(
-            //   activeDataSouceUserInfo.spotAccountTokenMap
-            // ).filter((t) => {
-            //   const f = gt(
-            //     Number(activeDataSouceUserInfo.spotAccountTokenMap[t].value),
-            //     0.01
-            //   );
-            //   return f;
-            // });
-          } else {
-            symbolList = Object.keys(
-              activeDataSouceUserInfo.tokenListMap
-            ).filter((t) => {
-              const f = gt(
-                Number(activeDataSouceUserInfo.spotAccountTokenMap[t].value),
-                0.01
-              );
-              return f;
-            });
-          }
+          symbolList = Object.keys(
+            activeDataSouceUserInfo.tokenListMap
+          ).filter((t) => {
+            const f = gt(
+              Number(activeDataSouceUserInfo.spotAccountTokenMap[t].value),
+              0.01
+            );
+            return f;
+          });
           list = symbolList.map((i) => ({
             label: i,
             value: i,
@@ -180,14 +144,7 @@ const SetPwdDialog: React.FC<SetPwdDialogProps> = memo(
     const totalBalanceForAttest = useMemo(() => {
       let totalBalance = '0';
       if (activeDataSouceUserInfo) {
-        if (dataSourceId === 'binance') {
-          totalBalance = getTotalBalFromNumObjAPriceObj(
-            activeDataSouceUserInfo?.tradingAccountTokenAmountObj,
-            activeDataSouceUserInfo?.tokenPriceMap
-          );
-        } else {
-          totalBalance = activeDataSouceUserInfo?.totalBalance;
-        }
+        totalBalance = activeDataSouceUserInfo?.totalBalance;
       }
 
       return totalBalance;
@@ -255,7 +212,7 @@ const SetPwdDialog: React.FC<SetPwdDialogProps> = memo(
           //     <>
           //       <p>
           //         Insufficient assets in your{' '}
-          //         {source === 'okx' ? 'Trading' : 'Spot'} Account.
+          //         Spot Account.
           //       </p>
           //       <p>Please confirm and try again later.</p>
           //     </>
