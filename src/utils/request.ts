@@ -1,5 +1,6 @@
 import { PADOSERVERURL } from '@/config/envConstants';
 import { DEFAULTFETCHTIMEOUT, padoExtensionVersion } from '@/config/constants';
+import store from '@/store';
 type FetchParams = {
   method: string;
   url: string;
@@ -78,6 +79,12 @@ const request = async (fetchParams: FetchParams) => {
     const response = await fetch(url, requestConfig);
     const responseJson = await response.json();
     clearTimeout(timeoutTimer);
+    if (responseJson.rc === 1 && responseJson.mc === '-999999') {
+      store.dispatch({
+        type: 'setRequireUpgrade',
+        payload: true,
+      });
+    }
     return responseJson;
   } catch (error: any) {
     if (error.name === 'AbortError') {
@@ -133,6 +140,13 @@ export const dataSourceRequest = async (fetchParams: FetchParams2) => {
     const response = await fetch(url, requestConfig);
     const responseJson = await response.json();
     clearTimeout(timeoutTimer);
+    if (responseJson.rc === 1 && responseJson.mc === '-999999') {
+      store.dispatch({
+        type: 'setRequireUpgrade',
+        payload: true
+      });
+    }
+
     return responseJson;
   } catch (error: any) {
     if (error.name === 'AbortError') {

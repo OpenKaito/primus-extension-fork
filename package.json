@@ -33,6 +33,7 @@
     "bignumber.js": "^9.1.1",
     "browserify-zlib": "^0.2.0",
     "buffer": "^6.0.3",
+    "ccxt": "^3.0.78",
     "cheerio": "^1.1.2",
     "circular-dependency-plugin": "5.2.2",
     "constants-browserify": "^1.0.0",

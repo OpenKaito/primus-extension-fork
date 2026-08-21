@@ -104,7 +104,7 @@ class WebExchange {
   async getTokenPriceMap() {
     /*await this.getTotalHoldingTokenSymbolList();
     // transfrom 'X' to 'XUSDT' when you query X's price;
-    // Convert symbols to the market pair format used by the source.
+    // ex: ETH => ETHUSDT,// binance=>'ETHUSDT',others:'ETH-USDT'
     // price unit: USD
     // coninbase need filter USD
     let LPSymbols = this.totalHoldingTokenSymbolList

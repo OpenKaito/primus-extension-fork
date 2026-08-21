@@ -47,6 +47,9 @@ importers:
       buffer:
         specifier: ^6.0.3
         version: 6.0.3
+      ccxt:
+        specifier: ^3.0.78
+        version: 3.0.78(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       cheerio:
         specifier: ^1.1.2
         version: 1.1.2
@@ -2663,6 +2666,10 @@ packages:
   catering@2.1.1:
     resolution: {integrity: sha512-K7Qy8O9p76sL3/3m7/zLKbRkyOlSZAgzEaLhyj2mXS8PsCud2Eo4hAb8aLtZqHh0QGqLcb9dlJSu6lHRVENm1w==}
     engines: {node: '>=6'}
+
+  ccxt@3.0.78:
+    resolution: {integrity: sha512-ECk8mpNZqOYEkuEArFYZudi1CZxIrzHYjeUQ36y1WIMyVl/Dm8VPrbvttfYEH8phiAi8cpggUojdKkBAbwBvxA==}
+    engines: {node: '>=15.0.0'}
 
   chalk@1.1.3:
     resolution: {integrity: sha512-U3lRVLMSlsCfjqYPbLyVv11M9CPW4I728d6TCKMAOJueEeB9/8o+eSsMnxPJD+Q+K909sdESg7C+tIkoH6on1A==}
@@ -10473,6 +10480,13 @@ snapshots:
   case@1.6.3: {}
 
   catering@2.1.1: {}
+
+  ccxt@3.0.78(bufferutil@4.0.9)(utf-8-validate@5.0.10):
+    dependencies:
+      ws: 8.18.3(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   chalk@1.1.3:
     dependencies:

@@ -24,6 +24,14 @@ const Overview = memo(() => {
     useState<string>();
   const navigate = useNavigate();
   let dataSourceList = ['x', 'tiktok'];
+  // if (size.width >= 1342) {
+  //   dataSourceList = ['x', 'tiktok', 'binance', 'okx', 'bybit'];
+  // } else
+  if (size.width >= 1128) {
+    dataSourceList = ['x', 'tiktok', 'binance', 'okx'];
+  } else if (size.width >= 914) {
+    dataSourceList = ['x', 'tiktok', 'binance'];
+  }
   const checkIsConnectedDataSourceFn = useCallback(
     (i) => {
       let hasConnectCurrent = !!sourceMap2[i] && sourceMap2[i]?.expired !== '1';

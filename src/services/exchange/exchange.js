@@ -106,7 +106,7 @@ class Exchange {
   async getTokenPriceMap() {
     await this.getTotalHoldingTokenSymbolList();
     // transfrom 'X' to 'XUSDT' when you query X's price;
-    // Convert symbols to the market pair format used by the source.
+    // ex: ETH => ETHUSDT,// binance=>'ETHUSDT',others:'ETH-USDT'
     // price unit: USD
     // coninbase need filter USD
     let LPSymbols = this.totalHoldingTokenSymbolList
@@ -201,14 +201,17 @@ class Exchange {
     }
   }
   async getTokenPrice(symbol) {
+    // binance=>'ETHUSDT',others:'ETH-USDT'
     const price = this.tokenPriceMap[symbol];
     if (price) {
       return price;
     }
-    const LPSymbol = `${symbol}-${USDT}`;
+    const LPSymbol =
+      this.exName === 'binance' ? `${symbol}${USDT}` : `${symbol}-${USDT}`;
     try {
       const res = await this.exchange.fetchTickers([LPSymbol]);
       const { last } = res[`${symbol}/${USDT}`];
+      // console.log(`binance-getTokenPrice-${symbol}`, last);
       return new BigNumber(last).toFixed();
     } catch {
       return ZERO + '';

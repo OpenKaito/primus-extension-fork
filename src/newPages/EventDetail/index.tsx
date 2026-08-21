@@ -35,7 +35,7 @@ const stepList: StepItem[] = [
   },
   {
     id: 2,
-    title: 'Complete an identity attestation',
+    title: 'Complete an attestation with a KYCed account on Binance',
 
     finished: false,
     tasksProcess: {

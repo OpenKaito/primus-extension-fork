@@ -157,7 +157,7 @@ const Nav: React.FC<PButtonProps> = memo(
             lastResponseConditions.value =
               activeAttestationParams.verificationValue;
             // lastResponseConditions.op = '>=';// TEST-spot30dVol
-            // Use the captured account identifier when available.
+            // for okx
             if (lastResponseConditionsSubconditions) {
               const lastSubCondition =
                 lastResponseConditionsSubconditions[

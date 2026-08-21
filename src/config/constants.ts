@@ -10,21 +10,38 @@ import iconWalletMetamask from '@/assets/img/iconWalletMetamask.svg';
 import iconWalletWalletConnect from '@/assets/img/iconWalletWalletConnect.svg';
 import iconWalletTokenPocket from '@/assets/img/iconWalletTokenPocket.svg';
 import iconMina from '@/assets/img/iconMina.png';
+import iconDataSourceBinance from '@/assets/img/iconDataSourceBinance.svg';
 import iconDataSourceTwitter from '@/assets/img/iconDataSourceX.svg';
+import iconDataSourceOKX from '@/assets/img/iconDataSourceOKX.svg';
 import iconDataSourceKucoin from '@/assets/img/iconDataSourceKucoin.svg';
 import iconDataSourceCoinbase from '@/assets/img/iconDataSourceCoinbase.png';
 import iconDataSourceHuobi from '@/assets/img/iconDataSourceHuobi.svg';
 import iconDataSourceHuobiWithCircle from '@/assets/img/iconDataSourceHuobiWithCircle.svg';
 import iconDataSourceGate from '@/assets/img/iconDataSourceGate.svg';
 import iconDataSourceBitget from '@/assets/img/iconDataSourceBitget.svg';
+import iconDataSourceBybit from '@/assets/img/iconDataSourceBybit.svg';
 import iconDataSourceMEXC from '@/assets/img/iconDataSourceMEXC.png';
 import iconDataSourceGithub from '@/assets/img/iconDataSourceGithub.png';
 import iconDataSourceDiscord from '@/assets/img/iconDataSourceDiscord.png';
 import iconDataSourceYoutube from '@/assets/img/iconDataSourceYoutube.svg';
 import iconDataSourceZan from '@/assets/img/iconDataSourceZan.svg';
 import iconDataSourceOnChainAssets from '@/assets/img/iconDataSourceOnChainAssets.svg';
+import Binance from '@/services/webdata/webexchange/webbinance';
+import WebBitGet from '@/services/webdata/webexchange/webbitget';
+// import OKX from '@/services/exchange/okx';
+import OKX from '@/services/webdata/webexchange/webokx';
+import KuCoin from '@/services/exchange/kucoin';
+import Coinbase from '@/services/exchange/coinbase';
+import Huobi from '@/services/exchange/huobi';
+import Gate from '@/services/exchange/gate';
+import WebGate from '@/services/webdata/webexchange/webgateio';
+import WebHuoBi from '@/services/webdata/webexchange/webhuobi';
+import Bitget from '@/services/exchange/bitget';
+import Bybit from '@/services/exchange/bybit';
+import Mexc from '@/services/exchange/mexc';
 import BigNumber from 'bignumber.js';
 import iconETH from '@/assets/img/iconETH.svg';
+import iconBinance from '@/assets/img/iconBinance.png';
 import iconNetwork3 from '@/assets/img/iconNetwork3.png';
 import iconNetwork4 from '@/assets/img/iconNetwork4.svg';
 import iconNetwork5 from '@/assets/img/iconNetwork5.png';
@@ -78,25 +95,55 @@ export const DATASOURCEMAP: DataSourceMapType = {
     type: 'Assets',
     icon: iconDataSourceOnChainAssets,
   },
+  binance: {
+    name: 'Binance',
+    type: 'Assets',
+    icon: iconDataSourceBinance,
+    constructorF: Binance,
+    baseName: 'api.binance.com',
+    accountBalanceUrl: 'https://api.binance.com/api/v3/account',
+  },
   coinbase: {
     name: 'Coinbase',
     type: 'Assets',
     icon: iconDataSourceCoinbase,
     requirePassphase: false,
+    constructorF: Coinbase,
     baseName: 'api.coinbase.com',
+    accountBalanceUrl: 'https://api.binance.com/api/v3/account',
   },
   kucoin: {
     name: 'KuCoin',
     type: 'Assets',
     icon: iconDataSourceKucoin,
     requirePassphase: true,
+    constructorF: KuCoin,
     baseName: 'api.kucoin.com',
+  },
+  bybit: {
+    name: 'Bybit',
+    type: 'Assets',
+    icon: iconDataSourceBybit,
+    requirePassphase: false,
+    constructorF: Bybit,
+    baseName: 'api.bybit.com',
+  },
+  okx: {
+    name: 'OKX',
+    type: 'Assets',
+    icon: iconDataSourceOKX,
+    requirePassphase: true,
+    constructorF: OKX,
+    baseName: 'www.okx.com',
+
+    accountBalanceUrl: 'https://www.okx.com/api/v5/account/balance',
   },
   gate: {
     name: 'Gate',
     type: 'Assets',
     icon: iconDataSourceGate,
     requirePassphase: false,
+    constructorF: WebGate,
     baseName: 'www.gate.io',
     accountBalanceUrl: 'https://www.gate.io/zh/myaccount/myfunds/spot',
   },
@@ -106,6 +153,7 @@ export const DATASOURCEMAP: DataSourceMapType = {
     icon: iconDataSourceHuobi,
     iconWithCircle: iconDataSourceHuobiWithCircle,
     requirePassphase: false,
+    constructorF: WebHuoBi,
     baseName: 'api.huobi.pro',
   },
   bitget: {
@@ -113,6 +161,7 @@ export const DATASOURCEMAP: DataSourceMapType = {
     type: 'Assets',
     icon: iconDataSourceBitget,
     requirePassphase: true,
+    constructorF: WebBitGet,
     baseName: 'www.bitget.com',
     accountBalanceUrl: 'https://www.bitget.com/v1/mix/assetsV2',
   },
@@ -121,6 +170,7 @@ export const DATASOURCEMAP: DataSourceMapType = {
     type: 'Assets',
     icon: iconDataSourceMEXC,
     requirePassphase: false,
+    constructorF: Mexc,
     baseName: 'api.mexc.com',
   },
   x: {
@@ -185,6 +235,10 @@ export const CHAINNETWORKLIST = [
     title: 'ETH',
   },
   {
+    icon: iconBinance,
+    title: 'Binance',
+  },
+  {
     icon: iconNetwork3,
     title: '3',
   },
@@ -211,7 +265,7 @@ export const SUPPORRTEDQUERYCHAINMAP = {
   BSC: {
     name: 'BSC',
     chainId: 56,
-    icon: iconNetwork3,
+    icon: iconBinance,
   },
   Ethereum: {
     name: 'Ethereum',
@@ -240,7 +294,12 @@ export const schemaTypeMap = {
   IDENTIFICATION_PROOF: 'IDENTIFICATION_PROOF',
 };
 
-export const supportAttestDataSourceNameList = ['Coinbase', 'ZAN'];
+export const supportAttestDataSourceNameList = [
+  'Binance',
+  'Coinbase',
+  'OKX',
+  'ZAN',
+];
 export const BADGELOTTRYTIMESTR = '2023-10-29 12:00:00';
 export const SCROLLEVENTNAME = 'SCROLL_LAUNCH_CAMPAIGN';
 export const BASEVENTNAME = 'BAS_EVENT_PROOF_OF_HUMANITY';

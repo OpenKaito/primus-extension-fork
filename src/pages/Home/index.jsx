@@ -65,7 +65,7 @@ const chains = [
     name: 'BAS-BSC-Testnet',
     currency: 'BNB',
     explorerUrl: 'https://testnet.bscscan.com/',
-    rpcUrl: 'https://bsc-testnet-dataseed.bnbchain.org/',
+    rpcUrl: 'https://data-seed-prebsc-1-s3.binance.org:8545/',
   },
   // {
   //   chainId: 42161,
