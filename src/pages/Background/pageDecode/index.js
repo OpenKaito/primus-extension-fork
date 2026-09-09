@@ -115,6 +115,10 @@ let hasStartedPageDecodeAttestation = false;
 let chatgptAuthorizationHeader = '';
 let chatgptReadyPollTimer = null;
 const CHATGPT_AUTH_HEADER_SESSION_KEY = 'kaitoChatGptAuthorizationHeader';
+// Data sources whose target API authenticates with an Authorization header. A
+// capture without that header (the bare re-fire's 401) is never a valid target
+// for these; see the guard in onBeforeSendHeadersFn.
+const BEARER_ONLY_DATA_SOURCES = new Set(['chatgpt', 'xo']);
 const isChatGptTemplateTargetUrl = (url) => {
   if (getActiveTemplateDataSource() !== 'chatgpt' || !url) {
     return false;
@@ -2138,11 +2142,12 @@ export const pageDecodeMsgListener = async (
         // );
         if (isTarget) {
           if (
-            dataSource === 'chatgpt' &&
+            BEARER_ONLY_DATA_SOURCES.has(String(dataSource || '').toLowerCase()) &&
             !hasAuthorizationHeader(formatHeader)
           ) {
-            // ChatGPT subscriptions authenticates with a Bearer header; a
-            // cookie-only request (bare 401) must not be captured as the target.
+            // ChatGPT and XO Market authenticate with a Bearer header; a
+            // cookie-only request (the bare re-fire's 401) must not be captured
+            // as the target, or the attestor replays it and attests the 401.
             return;
           }
           console.log('monad-details', details);
@@ -2547,6 +2552,8 @@ export const pageDecodeMsgListener = async (
         }
         const isChatgptDataSource =
           String(activeTemplate?.dataSource || '').toLowerCase() === 'chatgpt';
+        const isXoDataSource =
+          String(activeTemplate?.dataSource || '').toLowerCase() === 'xo';
 	        const isBinanceDataSource =
 	          isBinanceDataSourceName(activeTemplate?.dataSource) ||
 	          targetRequests.some((request) => isBinanceTargetUrl(request.url));
@@ -2557,8 +2564,8 @@ export const pageDecodeMsgListener = async (
           target: {
             tabId: dataSourcePageTabId,
           },
-          args: [targetRequests, isChatgptDataSource],
-          func: async (requestConfigs, isChatgpt) => {
+          args: [targetRequests, isChatgptDataSource, isXoDataSource],
+          func: async (requestConfigs, isChatgpt, isXo) => {
             const requests = Array.isArray(requestConfigs) ? requestConfigs : [];
             const expressions = requests.map((request) => request.url).filter(Boolean);
             const normalizeLiteralUrl = (expression) => {
@@ -2699,6 +2706,46 @@ export const pageDecodeMsgListener = async (
                   '[kaito-attest] ChatGPT pageDecode trigger error',
                   error
                 );
+              }
+              return;
+            }
+
+            if (isXo) {
+              // XO Market authenticates with a Privy Bearer token, not a cookie
+              // (KEBS docs/xo_account_verifier_20260909/design.md §2.2). The bare
+              // loop below cannot succeed here: credentials:'include' dies on the
+              // API's wildcard CORS and 'omit' returns a 401 body. Read the page's
+              // own token and fire the authenticated request instead. The
+              // onBeforeSendHeaders guard drops header-less captures for this
+              // dataSource, so a stray 401 can never become the target.
+              try {
+                let token = localStorage.getItem('privy:token') || '';
+                try {
+                  token = JSON.parse(token);
+                } catch {}
+                if (typeof token === 'string' && token.length > 0) {
+                  for (const request of urls) {
+                    await fetch(request.url, {
+                      method: request.method,
+                      credentials: 'omit',
+                      cache: 'no-store',
+                      headers: {
+                        authorization: `Bearer ${token}`,
+                        accept: 'application/json',
+                      },
+                    });
+                    console.log(
+                      '[kaito-attest] triggered XO target request (pageDecode bearer fast-path)',
+                      request.url
+                    );
+                  }
+                } else {
+                  console.log(
+                    '[kaito-attest] XO access token unavailable in pageDecode trigger'
+                  );
+                }
+              } catch (error) {
+                console.log('[kaito-attest] XO pageDecode trigger error', error);
               }
               return;
             }
