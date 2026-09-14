@@ -2739,10 +2739,8 @@ export const pageDecodeMsgListener = async (
 
       checkWebRequestIsReadyFn();
       chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-        if (
-          tabId === dataSourcePageTabId &&
-          (changeInfo.url || changeInfo.title)
-        ) {
+        // A title-only update does not replace the document.
+        if (tabId === dataSourcePageTabId && changeInfo.url) {
           await injectFn();
           checkWebRequestIsReadyFn();
         }
