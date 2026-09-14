@@ -2739,10 +2739,11 @@ export const pageDecodeMsgListener = async (
 
       checkWebRequestIsReadyFn();
       chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-        if (
-          tabId === dataSourcePageTabId &&
-          (changeInfo.url || changeInfo.title)
-        ) {
+        // Only a real navigation replaces the document and so needs the script
+        // injected again. Re-injecting on changeInfo.title stacked a fresh copy
+        // of pageDecode (and its listeners) onto the live page every time a
+        // price-ticker app rewrote its title, until the tab ran out of memory.
+        if (tabId === dataSourcePageTabId && changeInfo.url) {
           await injectFn();
           checkWebRequestIsReadyFn();
         }
