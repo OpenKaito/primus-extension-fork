@@ -204,6 +204,8 @@ const redactRequestsMapForKaitoDebug = () =>
   );
 const redactAlgorithmParamsForKaitoDebug = (params = {}) => ({
   source: params.source,
+  cipher: params.cipher,
+  modelType: params.modelType,
   schemaType: params.schemaType,
   templateId: params.templateId,
   requestCount: params.requests?.length,
