@@ -349,6 +349,7 @@ export async function assembleAlgorithmParamsForSDK(form, ext) {
     user,
     authUseridHash,
     setHostName: 'true',
+    checkContext: 'true',
     appParameters: {
       appId: appSignParameters.appId,
       appSignParameters: ext.appSignParameters,
