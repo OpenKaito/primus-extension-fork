@@ -325,10 +325,24 @@ export const padoZKAttestationJSSDKMsgListener = async (
 
       try {
         const kaitoTemplate = params.kaitoTemplate;
-        const { rc, result } = kaitoTemplate
-          ? { rc: 0, result: kaitoTemplate }
-          : await queryTemplateById(attTemplateID);
+        const remote = await queryTemplateById(attTemplateID).catch(() => null);
+        const remoteOk = remote?.rc === 0 && Boolean(remote?.result);
+        const { rc, result } = remoteOk
+          ? remote
+          : kaitoTemplate
+            ? { rc: 0, result: kaitoTemplate }
+            : { rc: -1, result: undefined };
         const templateResult = result;
+        if (kaitoTemplate) {
+          const localKeys = Object.keys(kaitoTemplate);
+          await appendKaitoPadoTrace('background_template_source', {
+            used: remoteOk ? 'hub' : 'backend',
+            cipher: remoteOk ? remote.result.sslCipherSuite || null : null,
+            missingLocally: remoteOk
+              ? Object.keys(remote.result).filter((k) => !localKeys.includes(k))
+              : [],
+          });
+        }
         if (rc === 0 && templateResult) {
           await appendKaitoPadoTrace('background_template_loaded', {
             hasKaitoTemplate: Boolean(kaitoTemplate),
@@ -492,6 +506,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
                   op: 'BOOLEAN_AND',
                   subconditions,
                 },
+                plaintext_outputs: [],
               };
               prev.push(responseItem);
               return prev;
