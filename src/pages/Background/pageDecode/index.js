@@ -341,6 +341,13 @@ const readChatGptAuthorizationHeaderFromSession = async () => {
 		    .replace(/\\\./g, '.');
 		  return normalized.includes('binance.com/bapi/');
 		};
+	const isPageContextOnlyTargetUrl = (url) => {
+	  const normalized = String(url || '')
+	    .toLowerCase()
+	    .replace(/\\\//g, '/')
+	    .replace(/\\\./g, '.');
+	  return normalized.includes('iapi.kraken.com/');
+	};
 	const binanceEndpointKey = (value) => {
 	  const normalized = String(value || '')
 	    .toLowerCase()
@@ -963,20 +970,28 @@ export const pageDecodeMsgListener = async (
           });
         } else {
           const matchRequestIdArr = Object.keys(requestsMap).filter((key) => {
+            // `onBeforeRequest` stores a body under its requestId before
+            // `onBeforeSendHeaders` has written the url, so requestsMap can hold
+            // an entry with no url. Reading `.url` off it threw inside this
+            // filter, and since the caller neither awaits nor catches, the whole
+            // matching pass died silently and the entry was never validated —
+            // which surfaced as an intermittent 00013.
+            if (typeof requestsMap[key]?.url !== 'string') {
+              return false;
+            }
             const checkRes = checkIsRequiredUrl({
               requestUrl: requestsMap[key].url,
               requiredUrl: url,
               urlType: urlType || 'REGX',
               queryParams: queryParams,
             });
-	            return (
-	              checkRes &&
-	              (!thisRequestObj?.method ||
-	                !requestsMap[key]?.method ||
-	                String(thisRequestObj.method).toUpperCase() ===
-	                  String(requestsMap[key].method).toUpperCase()) &&
-	              bodyMatchesTemplate(requestsMap[key], thisRequestObj)
-	            );
+	            const methodOk =
+	              !thisRequestObj?.method ||
+	              !requestsMap[key]?.method ||
+	              String(thisRequestObj.method).toUpperCase() ===
+	                String(requestsMap[key].method).toUpperCase();
+	            const bodyOk = bodyMatchesTemplate(requestsMap[key], thisRequestObj);
+	            return checkRes && methodOk && bodyOk;
 	          });
           for (const matchRequestId of [...matchRequestIdArr]) {
             if (requestsMap[matchRequestId]?.isTarget === 1) {
@@ -1078,7 +1093,8 @@ export const pageDecodeMsgListener = async (
 	              if (
 	                getActiveTemplateDataSource() === 'claude' ||
 	                isBinanceDataSourceName(getActiveTemplateDataSource()) ||
-	                isBinanceTargetUrl(targetRequestUrl)
+	                isBinanceTargetUrl(targetRequestUrl) ||
+	                isPageContextOnlyTargetUrl(targetRequestUrl)
 	              ) {
                 // Claude.ai and Binance private APIs can be gated when replayed
                 // from the extension background, even with captured cookies. The
@@ -1526,11 +1542,23 @@ export const pageDecodeMsgListener = async (
         // let formatUrlKey = url;
         let targetRequestId = '';
         if (sdkVersion) {
-          targetRequestId =
-            Object.values(requestsMap).find(
-              (sInfo) =>
-                sInfo.templateRequestUrl === r.url && sInfo.isTarget === 1
-            )?.requestId || '';
+          // Several captures can match one template entry — the site's own call
+          // carries the headers the API demands, while anything fired alongside
+          // it carries only what a bare fetch sends, and a header-poor pick is
+          // refused by the origin when the attestor replays it. Prefer a capture
+          // that has a body whenever the entry needs one, then the richest
+          // headers; every candidate is a request that was actually sent.
+          const candidates = Object.values(requestsMap).filter(
+            (sInfo) =>
+              sInfo.templateRequestUrl === r.url && sInfo.isTarget === 1
+          );
+          const score = (sInfo) =>
+            (!body || sInfo.body ? 1e6 : 0) + Object.keys(sInfo.headers || {}).length;
+          const richest = candidates.reduce(
+            (best, sInfo) => (!best || score(sInfo) > score(best) ? sInfo : best),
+            undefined
+          );
+          targetRequestId = richest?.requestId || '';
         } else {
           targetRequestId = Object.values(requestsMap).find((rInfo) => {
             const checkRes = checkIsRequiredUrl({
@@ -2039,6 +2067,9 @@ export const pageDecodeMsgListener = async (
         let formatUrlKey = currRequestUrl;
         let addQueryStr = '';
         let needQueryDetail = false;
+        if (String(method).toUpperCase() === 'OPTIONS') {
+          return;
+        }
         let formatHeader = requestHeaders.reduce((prev, curr) => {
           const { name, value } = curr;
           prev[name] = value;
