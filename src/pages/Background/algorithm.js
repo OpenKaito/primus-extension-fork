@@ -190,9 +190,11 @@ export const algorithmMsgListener = async (
       if (!message.res) {
         return;
       }
-      const { retcode, content, retdesc, details, isUserClick } = JSON.parse(
-        message.res
-      );
+      const { retcode, content, retdesc, details, isUserClick, status } =
+        JSON.parse(message.res);
+      if (status === 'streaming') {
+        return;
+      }
       if (isUserClick === 'true' || padoZKAttestationJSSDKBeginAttest) {
         await chrome.storage.local.set({
           getAttestationResultRes: message.res,
