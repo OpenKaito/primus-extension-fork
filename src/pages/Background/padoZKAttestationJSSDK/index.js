@@ -17,6 +17,11 @@ import {
 import { getErrorMsgTitleFn } from '../utils/handleError.js';
 import { addSDKParamsToReportParamsFn } from '../utils/reportEvent.js';
 import { padoExtensionVersion } from '@/config/constants';
+import {
+  isStreamResponseValueType,
+  responseTemplateIndicatesStream,
+  STREAM_REVEAL_OP,
+} from '../pageDecode/streamTemplate.js';
 
 let hasGetTwitterScreenName = false;
 let sdkParams = {};
@@ -390,6 +395,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
                   matchReqBodyKey,
                   ignoreResponse,
                 },
+                responseTemplate,
               } = curr;
               const requestItem = {
                 name: `sdk-${idx}`,
@@ -398,6 +404,9 @@ export const padoZKAttestationJSSDKMsgListener = async (
                 method,
                 matchReqBodyKey,
                 ignoreResponse,
+                ...(responseTemplateIndicatesStream(responseTemplate)
+                  ? { isStream: true }
+                  : {}),
               };
               prev.push(requestItem);
               return prev;
@@ -491,6 +500,14 @@ export const padoZKAttestationJSSDKMsgListener = async (
                   }
                 } else {
                   handleREVEALFn();
+                }
+                if (isStreamResponseValueType(valueType)) {
+                  subconditionItem = {
+                    field: expression,
+                    type: 'FIELD_REVEAL',
+                    op: STREAM_REVEAL_OP,
+                    reveal_id: key,
+                  };
                 }
                 // TODO
                 // field: '$.data.create_time';

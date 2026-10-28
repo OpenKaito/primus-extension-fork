@@ -1091,6 +1091,7 @@ export const pageDecodeMsgListener = async (
               let matchRequestUrlResult;
               let isTargetUrl = false;
 	              if (
+	                thisRequestObj?.isStream === true ||
 	                getActiveTemplateDataSource() === 'claude' ||
 	                isBinanceDataSourceName(getActiveTemplateDataSource()) ||
 	                isBinanceTargetUrl(targetRequestUrl) ||
@@ -1820,6 +1821,9 @@ export const pageDecodeMsgListener = async (
         PADOSERVERURL,
         padoExtensionVersion,
       });
+      if (requests.some((r) => r?.isStream === true)) {
+        aligorithmParams.stream = true;
+      }
       if (schemaType?.startsWith('OKX_TOKEN_HOLDING')) {
         aligorithmParams.requests[2].url =
           aligorithmParams.requests[2].url.replace('limit=5', 'limit=100');
