@@ -5,15 +5,17 @@ const { DOMParser } = require('xmldom');
 const cheerio = require('cheerio');
 
 import { customFetch2 } from '../utils/request';
-export const extraRequestFn2 = async (params) => {
+export const extraRequestFn2 = async (params, onError) => {
   try {
     const { ...requestParams } = params;
     const requestRes = await customFetch2(requestParams);
     if (typeof requestRes === 'object' && requestRes !== null) {
       return requestRes;
     }
+    onError?.(`non-object response: ${typeof requestRes}`);
   } catch (e) {
     console.log('fetch custom request error', e);
+    onError?.(e?.message || String(e));
   }
 };
 
