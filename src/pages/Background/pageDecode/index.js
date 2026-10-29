@@ -74,6 +74,12 @@ import {
   sendMsgToTab,
 } from '../utils/utils';
 import { addSDKParamsToReportParamsFn } from '../utils/reportEvent.js';
+import jp from 'jsonpath';
+import {
+  TARGET_CHECK_DEBUG_KEY,
+  describeTargetCheck,
+  mergeTargetCheck,
+} from './targetCheckDiag.js';
 import {
   extraRequestFn2,
   extraRequestHtmlFn,
@@ -683,6 +689,18 @@ const eventReportGenerateFn = async (rawData) => {
   };
   eventReport(eventInfo);
 };
+const recordTargetCheck = async (templateUrl, check) => {
+  try {
+    const { [TARGET_CHECK_DEBUG_KEY]: record } = await chrome.storage.local.get(
+      TARGET_CHECK_DEBUG_KEY
+    );
+    await chrome.storage.local.set({
+      [TARGET_CHECK_DEBUG_KEY]: mergeTargetCheck(record, String(templateUrl), check),
+    });
+  } catch (e) {
+    console.log('record target check error', e);
+  }
+};
 const handle00013 = async () => {
   let rawData = {};
   let baseRawData = {
@@ -1090,6 +1108,7 @@ export const pageDecodeMsgListener = async (
               }
               let matchRequestUrlResult;
               let isTargetUrl = false;
+              let replayError;
 	              if (
 	                thisRequestObj?.isStream === true ||
 	                getActiveTemplateDataSource() === 'claude' ||
@@ -1122,11 +1141,16 @@ export const pageDecodeMsgListener = async (
                   }
                 }
               } else {
-                matchRequestUrlResult = await extraRequestFn2({
-                  ...requestsMap[matchRequestId],
-                  header: requestsMap[matchRequestId].headers,
-                  url: targetRequestUrl,
-                });
+                matchRequestUrlResult = await extraRequestFn2(
+                  {
+                    ...requestsMap[matchRequestId],
+                    header: requestsMap[matchRequestId].headers,
+                    url: targetRequestUrl,
+                  },
+                  (message) => {
+                    replayError = message;
+                  }
+                );
               }
 
               if (
@@ -1247,6 +1271,17 @@ export const pageDecodeMsgListener = async (
                   );
               }
 
+              await recordTargetCheck(
+                thisRequestObj.url,
+                isTargetUrl
+                  ? { outcome: 'ok' }
+                  : describeTargetCheck(
+                      (value, path) => jp.query(value, path),
+                      jsonPathArr,
+                      matchRequestUrlResult,
+                      replayError
+                    )
+              );
               if (isTargetUrl) {
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
                 break;
