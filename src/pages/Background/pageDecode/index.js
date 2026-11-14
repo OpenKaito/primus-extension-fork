@@ -1256,15 +1256,9 @@ export const pageDecodeMsgListener = async (
 	        if (dataSource === 'chatgpt') {
 	          await hydrateMissingChatGptRequestsFromTrace(requests);
 	        }
-	        const writeBinanceReadinessDebug = async (extra = {}) => {
-	          if (
-	            !isBinanceDataSourceName(dataSource) &&
-	            !interceptorUrlArr.some(isBinanceTargetUrl)
-	          ) {
-	            return;
-	          }
+	        const writeReadinessDebug = async (extra = {}) => {
 	          await chrome.storage.local.set({
-	            kaitoBinanceReadinessDebug: {
+	            kaitoReadinessDebug: {
 	              at: Date.now(),
 	              dataSource,
 	              targetCount: interceptorRequests.length,
@@ -1408,7 +1402,7 @@ export const pageDecodeMsgListener = async (
             fl = f;
           }
 
-	          await writeBinanceReadinessDebug({
+	          await writeReadinessDebug({
 	            captured: captureNum,
 	            basicReady: f,
 	            allTargetsFound: sdkVersion ? !!allRequestUrlFoundFlag : null,
@@ -1438,7 +1432,7 @@ export const pageDecodeMsgListener = async (
 	          }
 	          return fl;
 	        } else {
-	          await writeBinanceReadinessDebug({
+	          await writeReadinessDebug({
 	            captured: 0,
 	            basicReady: false,
 	            allTargetsFound: false,
