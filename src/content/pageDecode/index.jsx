@@ -69,6 +69,21 @@ function PadoCard() {
     }
   }, []);
   useEffect(() => {
+    const applyTerminalResult = ({ result, failReason }) => {
+      setStatus('result');
+      sessionStorage.setItem('padoAttestRequestStatus', 'result');
+      if (failReason) {
+        sessionStorage.setItem(
+          'padoAttestRequestErrorTxt',
+          JSON.stringify(failReason)
+        );
+      }
+      if (result === 'success') {
+        sessionStorage.setItem('padoAttestRequestResultStatus', 'success');
+      }
+      setResultStatus(result);
+      setErrorTxt(failReason);
+    };
     const listenerFn = (request, sender, sendResponse) => {
       var {
         name,
@@ -86,19 +101,7 @@ function PadoCard() {
       }
       if (name === 'end') {
         console.log('content receive:end', request, failReason);
-        setStatus('result');
-        sessionStorage.setItem('padoAttestRequestStatus', 'result');
-        if (failReason) {
-          sessionStorage.setItem(
-            'padoAttestRequestErrorTxt',
-            JSON.stringify(failReason)
-          );
-        }
-        if (result === 'success') {
-          sessionStorage.setItem('padoAttestRequestResultStatus', 'success');
-        }
-        setResultStatus(result);
-        setErrorTxt(failReason);
+        applyTerminalResult({ result, failReason });
       }
     };
     chrome.runtime.onMessage.addListener(listenerFn);
@@ -109,6 +112,10 @@ function PadoCard() {
       },
       (response) => {
         if (chrome.runtime.lastError) return;
+        if (response?.terminalResult) {
+          applyTerminalResult(response.terminalResult);
+          return;
+        }
         if (response?.isReady) {
           setIsReadyFetch(true);
           sessionStorage.setItem('padoAttestRequestReady', '1');
