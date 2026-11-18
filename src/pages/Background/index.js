@@ -9,7 +9,10 @@ import { getSysConfig, getProofTypes } from '@/services/api/config';
 import { requestSignTypedData } from '@/services/wallets/utils';
 
 import { getCurrentDate, postMsg, sub } from '@/utils/utils';
-import { addSDKParamsToReportParamsFn } from './utils/reportEvent.js';
+import {
+  addSDKParamsToReportParamsFn,
+  recordAttestationAlgorithmResponse,
+} from './utils/reportEvent.js';
 
 import {
   SocailStoreVersion,
@@ -631,6 +634,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   console.log('background onMessage message', message, fullscreenPort);
   const { resType, type, name, params } = message;
   if (resType === 'algorithm') {
+    await recordAttestationAlgorithmResponse(message.resMethodName, message.res);
     algorithmMsgListener(
       message,
       sender,

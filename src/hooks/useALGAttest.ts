@@ -386,6 +386,10 @@ const useALGAttest = function useAttest() {
             eventInfo.rawData = Object.assign(eventInfo.rawData, {
               status: 'FAILED',
               reason: 'Not met the requirements',
+              detail: {
+                code: errorCode,
+                desc: msgObj.desc,
+              },
               event: fromEvents,
               address: parsedActiveRequestAttestation?.address,
             });
@@ -543,6 +547,10 @@ const useALGAttest = function useAttest() {
         // attestationId: uniqueId,
         status: 'FAILED',
         reason: 'timeout',
+        detail: {
+          code: '00002',
+          desc: attestTipMap['00002'].desc,
+        },
         event: fromEvents,
         address: parsedActiveRequestAttestation?.address,
       },

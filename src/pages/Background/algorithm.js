@@ -470,6 +470,10 @@ export const algorithmMsgListener = async (
             eventInfo.rawData = Object.assign(eventInfo.rawData, {
               status: 'FAILED',
               reason: 'Not met the requirements',
+              detail: {
+                code: errorCode,
+                desc: msgObj.desc,
+              },
               // event: fromEvents,
               address: parsedActiveRequestAttestation?.address,
             });

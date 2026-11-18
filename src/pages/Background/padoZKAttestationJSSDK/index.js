@@ -557,6 +557,9 @@ export const padoZKAttestationJSSDKMsgListener = async (
             account: '',
             attestationType: category,
             requestid,
+            address: userAddress,
+            kaitoRequestId: params.kaitoRequestId,
+            attConditions: params.attRequest?.attConditions,
             algorithmType:
               params.attRequest?.attMode?.algorithmType || 'proxytls', // TODO-zktls
             sdkVersion,
@@ -918,6 +921,10 @@ export const padoZKAttestationJSSDKMsgListener = async (
         templateId: activeAttestationParams.attTemplateID,
         status: 'FAILED',
         reason: 'timeout',
+        detail: {
+          code,
+          desc: msgObj.desc,
+        },
         address: userAddress,
       },
     };
