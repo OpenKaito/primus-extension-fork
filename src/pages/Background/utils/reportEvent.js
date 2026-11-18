@@ -66,13 +66,17 @@ export const clearAttestationReportContext = (requestid) =>
     await chrome.storage.local.remove([ATTESTATION_REPORT_CONTEXT_KEY]);
   });
 
-const updateAttestationReportContext = (update) =>
+const updateAttestationReportContext = (update, expectedRequestid) =>
   enqueueContextOperation(async () => {
     const stored = await chrome.storage.local.get([
       ATTESTATION_REPORT_CONTEXT_KEY,
     ]);
     const context = stored[ATTESTATION_REPORT_CONTEXT_KEY];
-    if (!context) {
+    if (
+      !context ||
+      (expectedRequestid !== undefined &&
+        context.requestid !== expectedRequestid)
+    ) {
       return;
     }
     await chrome.storage.local.set({
@@ -114,7 +118,11 @@ export const updateAttestationStepProgress = (
     return { ...context, steps, stepProgress };
   });
 
-export const recordAttestationAlgorithmResponse = (resMethodName, res) => {
+export const recordAttestationAlgorithmResponse = (
+  resMethodName,
+  res,
+  requestid
+) => {
   const fieldMap = {
     getAttestation: ['getAttestationRes', 'getAttestationResCount'],
     getAttestationResult: [
@@ -123,15 +131,18 @@ export const recordAttestationAlgorithmResponse = (resMethodName, res) => {
     ],
   };
   const fields = fieldMap[resMethodName];
-  if (!fields) {
+  if (!fields || requestid === undefined || requestid === null) {
     return Promise.resolve();
   }
   const [valueField, countField] = fields;
-  return updateAttestationReportContext((context) => ({
-    ...context,
-    [valueField]: res,
-    [countField]: (context[countField] || 0) + 1,
-  }));
+  return updateAttestationReportContext(
+    (context) => ({
+      ...context,
+      [valueField]: res,
+      [countField]: (context[countField] || 0) + 1,
+    }),
+    requestid
+  );
 };
 
 export const enrichAttestationReportRawData = async (eventType, rawData) => {

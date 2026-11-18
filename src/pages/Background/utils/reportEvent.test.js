@@ -49,7 +49,11 @@ describe('attestation report context', () => {
       attConditions: [[{ op: '>', value: 500 }]],
       targetCount: 1,
     });
-    await recordAttestationAlgorithmResponse('getAttestation', '{"retcode":"0"}');
+    await recordAttestationAlgorithmResponse(
+      'getAttestation',
+      '{"retcode":"0"}',
+      'primus-1'
+    );
 
     const rawData = await enrichAttestationReportRawData(
       'ATTESTATION_GENERATE',
@@ -110,16 +114,55 @@ describe('attestation report context', () => {
     failNextSet = true;
     await recordAttestationAlgorithmResponse(
       'getAttestation',
-      '{"retcode":"1"}'
+      '{"retcode":"1"}',
+      'primus-1'
     );
     await recordAttestationAlgorithmResponse(
       'getAttestation',
-      '{"retcode":"0"}'
+      '{"retcode":"0"}',
+      'primus-1'
     );
 
     assert.equal(
       values[ATTESTATION_REPORT_CONTEXT_KEY].getAttestationResCount,
       1
+    );
+  });
+
+  it('does not record late or unidentified responses in a newer context', async () => {
+    await initAttestationReportContext({ requestid: 'primus-2' });
+    await recordAttestationAlgorithmResponse(
+      'getAttestationResult',
+      '{"status":"streaming","content":"from-primus-1"}',
+      'primus-1'
+    );
+    await recordAttestationAlgorithmResponse(
+      'getAttestationResult',
+      '{"status":"streaming","content":"without-request-id"}'
+    );
+
+    assert.equal(
+      values[ATTESTATION_REPORT_CONTEXT_KEY].getAttestationResultResCount,
+      0
+    );
+    assert.equal(
+      values[ATTESTATION_REPORT_CONTEXT_KEY].getAttestationResultRes,
+      undefined
+    );
+
+    await recordAttestationAlgorithmResponse(
+      'getAttestationResult',
+      '{"status":"streaming","content":"from-primus-2"}',
+      'primus-2'
+    );
+
+    assert.equal(
+      values[ATTESTATION_REPORT_CONTEXT_KEY].getAttestationResultResCount,
+      1
+    );
+    assert.equal(
+      values[ATTESTATION_REPORT_CONTEXT_KEY].getAttestationResultRes,
+      '{"status":"streaming","content":"from-primus-2"}'
     );
   });
 
