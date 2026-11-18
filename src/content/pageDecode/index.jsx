@@ -102,6 +102,19 @@ function PadoCard() {
       }
     };
     chrome.runtime.onMessage.addListener(listenerFn);
+    chrome.runtime.sendMessage(
+      {
+        type: 'pageDecode',
+        name: 'getWebRequestReadyStatus',
+      },
+      (response) => {
+        if (chrome.runtime.lastError) return;
+        if (response?.isReady) {
+          setIsReadyFetch(true);
+          sessionStorage.setItem('padoAttestRequestReady', '1');
+        }
+      }
+    );
     return () => {
       chrome.runtime.onMessage.removeListener(listenerFn);
     };
@@ -305,11 +318,11 @@ chrome.runtime.sendMessage(
       if (isDisabled) {
         return;
       }
+      if (response.isReady) {
+        sessionStorage.setItem('padoAttestRequestReady', '1');
+      }
       // avoid re-render
       if (activeRequest) {
-        if (response.isReady) {
-          sessionStorage.setItem('padoAttestRequestReady', '1');
-        }
         return;
       }
 

@@ -2845,6 +2845,12 @@ export const pageDecodeMsgListener = async (
       await hydrateBinanceCachedRequestsFn();
       await checkWebRequestIsReadyFn();
     }
+    if (name === 'getWebRequestReadyStatus') {
+      sendResponse({
+        isReady: isReadyRequest,
+      });
+      return;
+    }
     if (name === 'initCompleted') {
       console.log('content_scripts-bg-decode receive:initCompleted');
       sendResponse({
