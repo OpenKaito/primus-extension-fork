@@ -220,6 +220,8 @@ function PadoCard() {
     let timer3;
 
     if (status === 'verifying') {
+      const verifyingTimeoutMs =
+        activeRequest?.verifyingDialogTimeoutMs ?? ATTESTATIONPOLLINGTIMEOUT;
       timer3 = setTimeout(() => {
         const lastStatus3 = sessionStorage.getItem('padoAttestRequestStatus');
         console.log('timer3', lastStatus3, statusRef.current);
@@ -246,7 +248,7 @@ function PadoCard() {
           };
           chrome.runtime.sendMessage(msgObj);
         }
-      }, ATTESTATIONPOLLINGTIMEOUT);
+      }, verifyingTimeoutMs);
     }
 
     return () => {

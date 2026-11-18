@@ -16,6 +16,7 @@ import {
 } from '../lumaMonadEvent/index.js';
 import { getErrorMsgTitleFn } from '../utils/handleError.js';
 import { addSDKParamsToReportParamsFn } from '../utils/reportEvent.js';
+import { computeVerifyingDialogTimeoutMs } from '../utils/attestationTimeout.js';
 import { padoExtensionVersion } from '@/config/constants';
 import {
   isStreamResponseValueType,
@@ -796,6 +797,9 @@ export const padoZKAttestationJSSDKMsgListener = async (
           params: {
             ...currRequestTemplate,
             requestid,
+            verifyingDialogTimeoutMs: computeVerifyingDialogTimeoutMs(
+              params.attRequest
+            ),
           },
           // extensionTabId: currentWindowTabs[0]?.id,
           operation: 'attest',
