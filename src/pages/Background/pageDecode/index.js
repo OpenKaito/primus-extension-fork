@@ -754,6 +754,7 @@ const handle00013 = async () => {
           event: parsedActiveRequestAttestation.attestOrigin,
           templateId: parsedActiveRequestAttestation.attTemplateID,
           address: userAddress,
+          requestid: parsedActiveRequestAttestation.requestid,
           ...baseRawData,
         };
         if (parsedActiveRequestAttestation.event) {
@@ -777,6 +778,7 @@ const handle00013 = async () => {
           schemaType: parsedActiveRequestAttestation.schemaType,
           sigFormat: parsedActiveRequestAttestation.sigFormat,
           address: parsedActiveRequestAttestation?.address,
+          requestid: parsedActiveRequestAttestation.requestid,
           ...baseRawData,
         };
         if (parsedActiveRequestAttestation.event) {
@@ -855,6 +857,7 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
           event: parsedActiveRequestAttestation.attestOrigin,
           templateId: parsedActiveRequestAttestation.attTemplateID,
           address: userAddress,
+          requestid: parsedActiveRequestAttestation.requestid,
           ...baseRawData,
         };
         if (parsedActiveRequestAttestation.event) {
@@ -878,6 +881,7 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
           schemaType: parsedActiveRequestAttestation.schemaType,
           sigFormat: parsedActiveRequestAttestation.sigFormat,
           address: parsedActiveRequestAttestation?.address,
+          requestid: parsedActiveRequestAttestation.requestid,
           ...baseRawData,
         };
         if (parsedActiveRequestAttestation.event) {

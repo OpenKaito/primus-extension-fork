@@ -54,6 +54,7 @@ describe('attestation report context', () => {
     const rawData = await enrichAttestationReportRawData(
       'ATTESTATION_GENERATE',
       {
+        requestid: 'primus-1',
         status: 'FAILED',
         reason: 'Not met the requirements',
         detail: { code: '00104', desc: 'Not eligible' },
@@ -71,7 +72,10 @@ describe('attestation report context', () => {
   });
 
   it('reports completed and partial stages for 00013', async () => {
-    await initAttestationReportContext({ targetCount: 2 });
+    await initAttestationReportContext({
+      requestid: 'primus-1',
+      targetCount: 2,
+    });
     await updateAttestationStepProgress('captured', {
       completed: 2,
       total: 2,
@@ -84,6 +88,7 @@ describe('attestation report context', () => {
     const rawData = await enrichAttestationReportRawData(
       'ATTESTATION_GENERATE',
       {
+        requestid: 'primus-1',
         status: 'FAILED',
         detail: { code: '00013', desc: 'Target data missing' },
       }
@@ -121,11 +126,37 @@ describe('attestation report context', () => {
   it('does not clear a newer attestation context', async () => {
     await initAttestationReportContext({ requestid: 'primus-1' });
     await initAttestationReportContext({ requestid: 'primus-2' });
+    const rawData = await enrichAttestationReportRawData(
+      'ATTESTATION_GENERATE',
+      {
+        requestid: 'primus-1',
+        status: 'FAILED',
+      }
+    );
     await clearAttestationReportContext('primus-1');
 
+    assert.equal(rawData.requestid, 'primus-1');
+    assert.equal(rawData.ext, undefined);
     assert.equal(
       values[ATTESTATION_REPORT_CONTEXT_KEY].requestid,
       'primus-2'
+    );
+  });
+
+  it('does not enrich or clear an event without its original request ID', async () => {
+    await initAttestationReportContext({ requestid: 'primus-1' });
+    const rawData = await enrichAttestationReportRawData(
+      'ATTESTATION_GENERATE',
+      {
+        status: 'FAILED',
+      }
+    );
+
+    assert.equal(rawData.requestid, undefined);
+    assert.equal(rawData.ext, undefined);
+    assert.equal(
+      values[ATTESTATION_REPORT_CONTEXT_KEY].requestid,
+      'primus-1'
     );
   });
 });

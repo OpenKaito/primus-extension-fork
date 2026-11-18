@@ -138,18 +138,21 @@ export const enrichAttestationReportRawData = async (eventType, rawData) => {
   if (!TARGET_EVENT_TYPES.has(eventType)) {
     return rawData;
   }
+  const originalRequestid = rawData?.requestid;
+  if (originalRequestid === undefined) {
+    return rawData;
+  }
   await contextUpdateQueue;
   const stored = await chrome.storage.local.get([
     ATTESTATION_REPORT_CONTEXT_KEY,
   ]);
   const context = stored[ATTESTATION_REPORT_CONTEXT_KEY];
-  if (!context) {
+  if (!context || context.requestid !== originalRequestid) {
     return rawData;
   }
   const enriched = {
     ...rawData,
     address: context.address ?? rawData.address,
-    requestid: context.requestid ?? rawData.requestid,
     kaitoRequestId: context.kaitoRequestId ?? rawData.kaitoRequestId,
     templateId: context.templateId ?? rawData.templateId,
   };

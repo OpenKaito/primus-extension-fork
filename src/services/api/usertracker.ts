@@ -11,6 +11,7 @@ type EventInfo = {
 export const eventReport = async (data: EventInfo) => {
     let storedata: any = {};
     storedata.eventType = data.eventType;
+    const reportRequestid = data.rawData?.requestid;
     const { keyStore } = await chrome.storage.local.get(['keyStore']);
     if (keyStore) {
         const { address } = JSON.parse(keyStore);
@@ -23,7 +24,6 @@ export const eventReport = async (data: EventInfo) => {
         );
         storedata.rawData = JSON.stringify(data.rawData);
     }
-    const reportRequestid = data.rawData?.requestid;
 
     try {
         return await request({

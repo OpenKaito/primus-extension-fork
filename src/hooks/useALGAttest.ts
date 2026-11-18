@@ -175,6 +175,7 @@ const useALGAttest = function useAttest() {
               source: parsedActiveRequestAttestation.source,
               schemaType: parsedActiveRequestAttestation.schemaType,
               sigFormat: parsedActiveRequestAttestation.sigFormat,
+              requestid: parsedActiveRequestAttestation.requestid,
               // attestationId: uniqueId,
               status: 'FAILED',
               reason: 'algorithm is not initialized',
@@ -213,6 +214,7 @@ const useALGAttest = function useAttest() {
             source: parsedActiveRequestAttestation.source,
             schemaType: parsedActiveRequestAttestation.schemaType,
             sigFormat: parsedActiveRequestAttestation.sigFormat,
+            requestid: parsedActiveRequestAttestation.requestid,
           },
         };
 
@@ -544,6 +546,7 @@ const useALGAttest = function useAttest() {
         source: parsedActiveRequestAttestation.source,
         schemaType: parsedActiveRequestAttestation.schemaType,
         sigFormat: parsedActiveRequestAttestation.sigFormat,
+        requestid: parsedActiveRequestAttestation.requestid,
         // attestationId: uniqueId,
         status: 'FAILED',
         reason: 'timeout',

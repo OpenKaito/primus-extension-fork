@@ -209,6 +209,7 @@ export const algorithmMsgListener = async (
             source: parsedActiveRequestAttestation.source,
             schemaType: parsedActiveRequestAttestation.schemaType,
             sigFormat: parsedActiveRequestAttestation.sigFormat,
+            requestid: parsedActiveRequestAttestation.requestid,
           },
         };
         eventInfo.rawData = await addSDKParamsToReportParamsFn(
