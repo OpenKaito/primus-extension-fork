@@ -634,7 +634,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   console.log('background onMessage message', message, fullscreenPort);
   const { resType, type, name, params } = message;
   if (resType === 'algorithm') {
-    await recordAttestationAlgorithmResponse(message.resMethodName, message.res);
+    recordAttestationAlgorithmResponse(message.resMethodName, message.res);
     algorithmMsgListener(
       message,
       sender,

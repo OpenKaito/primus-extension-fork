@@ -10,6 +10,7 @@ import {
 } from './reportEvent.js';
 
 const values = {};
+let failNextSet = false;
 
 globalThis.chrome = {
   storage: {
@@ -20,6 +21,10 @@ globalThis.chrome = {
         );
       },
       async set(entries) {
+        if (failNextSet) {
+          failNextSet = false;
+          throw new Error('simulated storage failure');
+        }
         Object.assign(values, entries);
       },
       async remove(keys) {
@@ -31,6 +36,7 @@ globalThis.chrome = {
 
 beforeEach(() => {
   Object.keys(values).forEach((key) => delete values[key]);
+  failNextSet = false;
 });
 
 describe('attestation report context', () => {
@@ -92,5 +98,34 @@ describe('attestation report context', () => {
     await initAttestationReportContext({ requestid: 'primus-1' });
     await clearAttestationReportContext();
     assert.equal(values[ATTESTATION_REPORT_CONTEXT_KEY], undefined);
+  });
+
+  it('continues context updates after a storage failure', async () => {
+    await initAttestationReportContext({ requestid: 'primus-1' });
+    failNextSet = true;
+    await recordAttestationAlgorithmResponse(
+      'getAttestation',
+      '{"retcode":"1"}'
+    );
+    await recordAttestationAlgorithmResponse(
+      'getAttestation',
+      '{"retcode":"0"}'
+    );
+
+    assert.equal(
+      values[ATTESTATION_REPORT_CONTEXT_KEY].getAttestationResCount,
+      1
+    );
+  });
+
+  it('does not clear a newer attestation context', async () => {
+    await initAttestationReportContext({ requestid: 'primus-1' });
+    await initAttestationReportContext({ requestid: 'primus-2' });
+    await clearAttestationReportContext('primus-1');
+
+    assert.equal(
+      values[ATTESTATION_REPORT_CONTEXT_KEY].requestid,
+      'primus-2'
+    );
   });
 });

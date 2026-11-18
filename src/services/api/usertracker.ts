@@ -23,6 +23,7 @@ export const eventReport = async (data: EventInfo) => {
         );
         storedata.rawData = JSON.stringify(data.rawData);
     }
+    const reportRequestid = data.rawData?.requestid;
 
     try {
         return await request({
@@ -33,9 +34,10 @@ export const eventReport = async (data: EventInfo) => {
     } finally {
         if (
             data.eventType === 'ATTESTATION_GENERATE' &&
-            ['SUCCESS', 'FAILED'].includes(data.rawData?.status)
+            ['SUCCESS', 'FAILED'].includes(data.rawData?.status) &&
+            reportRequestid !== undefined
         ) {
-            await clearAttestationReportContext();
+            await clearAttestationReportContext(reportRequestid);
         }
     }
 };

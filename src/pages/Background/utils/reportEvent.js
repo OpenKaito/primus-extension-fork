@@ -8,47 +8,66 @@ const TARGET_EVENT_TYPES = new Set([
 ]);
 let contextUpdateQueue = Promise.resolve();
 
+const enqueueContextOperation = (operation) => {
+  contextUpdateQueue = contextUpdateQueue
+    .catch(() => {})
+    .then(operation)
+    .catch((error) => {
+      console.warn('Failed to update attestation report context:', error);
+    });
+  return contextUpdateQueue;
+};
+
 const defaultStepProgress = () => ({
   captured: { status: 'pending', completed: 0, total: 0 },
   replayed: { status: 'pending', completed: 0, total: 0, skipped: 0 },
   validated: { status: 'pending', completed: 0, total: 0 },
 });
 
-export const initAttestationReportContext = async ({
+export const initAttestationReportContext = ({
   address,
   requestid,
   kaitoRequestId,
   templateId,
   attConditions,
   targetCount = 0,
-}) => {
-  await contextUpdateQueue;
-  const stepProgress = defaultStepProgress();
-  Object.values(stepProgress).forEach((step) => {
-    step.total = targetCount;
+}) =>
+  enqueueContextOperation(async () => {
+    const stepProgress = defaultStepProgress();
+    Object.values(stepProgress).forEach((step) => {
+      step.total = targetCount;
+    });
+    await chrome.storage.local.set({
+      [ATTESTATION_REPORT_CONTEXT_KEY]: {
+        address,
+        requestid,
+        kaitoRequestId,
+        templateId,
+        attConditions,
+        steps: [],
+        stepProgress,
+        getAttestationResCount: 0,
+        getAttestationResultResCount: 0,
+      },
+    });
   });
-  await chrome.storage.local.set({
-    [ATTESTATION_REPORT_CONTEXT_KEY]: {
-      address,
-      requestid,
-      kaitoRequestId,
-      templateId,
-      attConditions,
-      steps: [],
-      stepProgress,
-      getAttestationResCount: 0,
-      getAttestationResultResCount: 0,
-    },
+
+export const clearAttestationReportContext = (requestid) =>
+  enqueueContextOperation(async () => {
+    if (requestid !== undefined) {
+      const stored = await chrome.storage.local.get([
+        ATTESTATION_REPORT_CONTEXT_KEY,
+      ]);
+      const context = stored[ATTESTATION_REPORT_CONTEXT_KEY];
+      if (!context || context.requestid !== requestid) {
+        return;
+      }
+    }
+    await chrome.storage.local.remove([ATTESTATION_REPORT_CONTEXT_KEY]);
   });
-};
 
-export const clearAttestationReportContext = async () => {
-  await contextUpdateQueue;
-  await chrome.storage.local.remove([ATTESTATION_REPORT_CONTEXT_KEY]);
-};
-
-const updateAttestationReportContext = (update) => {
-  contextUpdateQueue = contextUpdateQueue.then(async () => {
+const updateAttestationReportContext = (update) =>
+  enqueueContextOperation(async () => {
     const stored = await chrome.storage.local.get([
       ATTESTATION_REPORT_CONTEXT_KEY,
     ]);
@@ -60,8 +79,6 @@ const updateAttestationReportContext = (update) => {
       [ATTESTATION_REPORT_CONTEXT_KEY]: update(context),
     });
   });
-  return contextUpdateQueue;
-};
 
 export const updateAttestationStepProgress = (
   step,
