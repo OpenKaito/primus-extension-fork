@@ -69,6 +69,21 @@ function PadoCard() {
     }
   }, []);
   useEffect(() => {
+    const applyTerminalResult = ({ result, failReason }) => {
+      setStatus('result');
+      sessionStorage.setItem('padoAttestRequestStatus', 'result');
+      if (failReason) {
+        sessionStorage.setItem(
+          'padoAttestRequestErrorTxt',
+          JSON.stringify(failReason)
+        );
+      }
+      if (result === 'success') {
+        sessionStorage.setItem('padoAttestRequestResultStatus', 'success');
+      }
+      setResultStatus(result);
+      setErrorTxt(failReason);
+    };
     const listenerFn = (request, sender, sendResponse) => {
       var {
         name,
@@ -86,22 +101,27 @@ function PadoCard() {
       }
       if (name === 'end') {
         console.log('content receive:end', request, failReason);
-        setStatus('result');
-        sessionStorage.setItem('padoAttestRequestStatus', 'result');
-        if (failReason) {
-          sessionStorage.setItem(
-            'padoAttestRequestErrorTxt',
-            JSON.stringify(failReason)
-          );
-        }
-        if (result === 'success') {
-          sessionStorage.setItem('padoAttestRequestResultStatus', 'success');
-        }
-        setResultStatus(result);
-        setErrorTxt(failReason);
+        applyTerminalResult({ result, failReason });
       }
     };
     chrome.runtime.onMessage.addListener(listenerFn);
+    chrome.runtime.sendMessage(
+      {
+        type: 'pageDecode',
+        name: 'getWebRequestReadyStatus',
+      },
+      (response) => {
+        if (chrome.runtime.lastError) return;
+        if (response?.terminalResult) {
+          applyTerminalResult(response.terminalResult);
+          return;
+        }
+        if (response?.isReady) {
+          setIsReadyFetch(true);
+          sessionStorage.setItem('padoAttestRequestReady', '1');
+        }
+      }
+    );
     return () => {
       chrome.runtime.onMessage.removeListener(listenerFn);
     };
@@ -207,6 +227,8 @@ function PadoCard() {
     let timer3;
 
     if (status === 'verifying') {
+      const verifyingTimeoutMs =
+        activeRequest?.verifyingDialogTimeoutMs ?? ATTESTATIONPOLLINGTIMEOUT;
       timer3 = setTimeout(() => {
         const lastStatus3 = sessionStorage.getItem('padoAttestRequestStatus');
         console.log('timer3', lastStatus3, statusRef.current);
@@ -233,7 +255,7 @@ function PadoCard() {
           };
           chrome.runtime.sendMessage(msgObj);
         }
-      }, ATTESTATIONPOLLINGTIMEOUT);
+      }, verifyingTimeoutMs);
     }
 
     return () => {
@@ -305,11 +327,11 @@ chrome.runtime.sendMessage(
       if (isDisabled) {
         return;
       }
+      if (response.isReady) {
+        sessionStorage.setItem('padoAttestRequestReady', '1');
+      }
       // avoid re-render
       if (activeRequest) {
-        if (response.isReady) {
-          sessionStorage.setItem('padoAttestRequestReady', '1');
-        }
         return;
       }
 

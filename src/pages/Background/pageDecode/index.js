@@ -109,6 +109,7 @@ let activeTemplate = {};
 let currExtentionId;
 
 let isReadyRequest = false;
+let terminalResult = null;
 let operationType = null;
 let RequestsHasCompleted = false;
 let formatAlgorithmParams = null;
@@ -915,6 +916,7 @@ export const pageDecodeMsgListener = async (
   const { name, params, operation } = request;
   console.log('pageDecodeMsgListener');
   if (name === 'init') {
+    terminalResult = null;
     activeTemplate = {};
     activeTemplate = {
       ...params,
@@ -2945,6 +2947,13 @@ export const pageDecodeMsgListener = async (
       await hydrateBinanceCachedRequestsFn();
       await checkWebRequestIsReadyFn();
     }
+    if (name === 'getWebRequestReadyStatus') {
+      sendResponse({
+        isReady: isReadyRequest,
+        terminalResult,
+      });
+      return;
+    }
     if (name === 'initCompleted') {
       console.log('content_scripts-bg-decode receive:initCompleted');
       sendResponse({
@@ -3007,6 +3016,7 @@ export const pageDecodeMsgListener = async (
 };
 
 const handleEnd = (request) => {
+  terminalResult = request?.params ? { ...request.params } : null;
   if (dataSourcePageTabId) {
     sendMsgToDataSourcePage(request);
     chrome.webRequest.onBeforeSendHeaders.removeListener(onBeforeSendHeadersFn);
@@ -3016,6 +3026,7 @@ const handleEnd = (request) => {
   }
 };
 const chandleClose = async (params, processAlgorithmReq) => {
+  terminalResult = null;
   console.log('pageDecode-close');
   const deleteTabId = params?.tabId || dataSourcePageTabId;
   console.log('pageDecode-close-tabId', params?.tabId, dataSourcePageTabId);
