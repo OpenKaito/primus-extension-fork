@@ -175,6 +175,7 @@ const useALGAttest = function useAttest() {
               source: parsedActiveRequestAttestation.source,
               schemaType: parsedActiveRequestAttestation.schemaType,
               sigFormat: parsedActiveRequestAttestation.sigFormat,
+              requestid: parsedActiveRequestAttestation.requestid,
               // attestationId: uniqueId,
               status: 'FAILED',
               reason: 'algorithm is not initialized',
@@ -213,6 +214,7 @@ const useALGAttest = function useAttest() {
             source: parsedActiveRequestAttestation.source,
             schemaType: parsedActiveRequestAttestation.schemaType,
             sigFormat: parsedActiveRequestAttestation.sigFormat,
+            requestid: parsedActiveRequestAttestation.requestid,
           },
         };
 
@@ -386,6 +388,10 @@ const useALGAttest = function useAttest() {
             eventInfo.rawData = Object.assign(eventInfo.rawData, {
               status: 'FAILED',
               reason: 'Not met the requirements',
+              detail: {
+                code: errorCode,
+                desc: msgObj.desc,
+              },
               event: fromEvents,
               address: parsedActiveRequestAttestation?.address,
             });
@@ -540,9 +546,14 @@ const useALGAttest = function useAttest() {
         source: parsedActiveRequestAttestation.source,
         schemaType: parsedActiveRequestAttestation.schemaType,
         sigFormat: parsedActiveRequestAttestation.sigFormat,
+        requestid: parsedActiveRequestAttestation.requestid,
         // attestationId: uniqueId,
         status: 'FAILED',
         reason: 'timeout',
+        detail: {
+          code: '00002',
+          desc: attestTipMap['00002'].desc,
+        },
         event: fromEvents,
         address: parsedActiveRequestAttestation?.address,
       },

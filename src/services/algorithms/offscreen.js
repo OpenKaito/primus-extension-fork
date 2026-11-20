@@ -19,6 +19,7 @@ const LEGACY_NETWORK_VERSION = '1.1.1';
 const SDK_ATTESTATION_SESSION_KEY = 'padoZKAttestationJSSDKSession';
 
 let currentStreamContext;
+let currentAttestationRequestid;
 
 function processStream(payload) {
   const streamResult = {
@@ -109,6 +110,7 @@ class AlgorithmClient {
   }
 
   getAttestation(params) {
+    currentAttestationRequestid = params?.requestid;
     const effectiveVersion = getEffectiveVersion(params?.clientType);
     console.log('getAttestation AlgorithmInited=', this.initialized);
     if (!this.initialized) {
@@ -197,6 +199,8 @@ chrome.runtime.onMessage.addListener((message) => {
       resType: 'algorithm',
       resMethodName: 'getAttestationResult',
       res,
+      requestid:
+        message.params?.requestid ?? currentAttestationRequestid,
     });
   } else if (message.method === 'startOffline') {
     const res = algorithmClient.startOffline(message.params);

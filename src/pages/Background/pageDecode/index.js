@@ -73,7 +73,12 @@ import {
   getErrorMsgFn,
   sendMsgToTab,
 } from '../utils/utils';
-import { addSDKParamsToReportParamsFn } from '../utils/reportEvent.js';
+import {
+  addSDKParamsToReportParamsFn,
+  clearAttestationReportContext,
+  initAttestationReportContext,
+  updateAttestationStepProgress,
+} from '../utils/reportEvent.js';
 import jp from 'jsonpath';
 import {
   TARGET_CHECK_DEBUG_KEY,
@@ -118,6 +123,9 @@ let onCompletedFn = () => {};
 let requestsMap = {};
 let reportRequestIds = [];
 let hasStartedPageDecodeAttestation = false;
+let replayedTargetKeys = new Set();
+let validatedTargetKeys = new Set();
+let skippedReplayTargetKeys = new Set();
 let chatgptAuthorizationHeader = '';
 let chatgptReadyPollTimer = null;
 const CHATGPT_AUTH_HEADER_SESSION_KEY = 'kaitoChatGptAuthorizationHeader';
@@ -248,6 +256,9 @@ const resetVarsFn = () => {
   requestsMap = {};
   reportRequestIds = [];
   hasStartedPageDecodeAttestation = false;
+  replayedTargetKeys = new Set();
+  validatedTargetKeys = new Set();
+  skippedReplayTargetKeys = new Set();
   chatgptAuthorizationHeader = '';
   if (chatgptReadyPollTimer) {
     clearInterval(chatgptReadyPollTimer);
@@ -743,6 +754,7 @@ const handle00013 = async () => {
           event: parsedActiveRequestAttestation.attestOrigin,
           templateId: parsedActiveRequestAttestation.attTemplateID,
           address: userAddress,
+          requestid: parsedActiveRequestAttestation.requestid,
           ...baseRawData,
         };
         if (parsedActiveRequestAttestation.event) {
@@ -766,6 +778,7 @@ const handle00013 = async () => {
           schemaType: parsedActiveRequestAttestation.schemaType,
           sigFormat: parsedActiveRequestAttestation.sigFormat,
           address: parsedActiveRequestAttestation?.address,
+          requestid: parsedActiveRequestAttestation.requestid,
           ...baseRawData,
         };
         if (parsedActiveRequestAttestation.event) {
@@ -844,6 +857,7 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
           event: parsedActiveRequestAttestation.attestOrigin,
           templateId: parsedActiveRequestAttestation.attTemplateID,
           address: userAddress,
+          requestid: parsedActiveRequestAttestation.requestid,
           ...baseRawData,
         };
         if (parsedActiveRequestAttestation.event) {
@@ -867,6 +881,7 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
           schemaType: parsedActiveRequestAttestation.schemaType,
           sigFormat: parsedActiveRequestAttestation.sigFormat,
           address: parsedActiveRequestAttestation?.address,
+          requestid: parsedActiveRequestAttestation.requestid,
           ...baseRawData,
         };
         if (parsedActiveRequestAttestation.event) {
@@ -906,6 +921,18 @@ export const pageDecodeMsgListener = async (
       dataSource: params?.dataSource || params?.dataSourceId,
     };
     resetVarsFn();
+    const targetCount =
+      activeTemplate?.datasourceTemplate?.requests?.filter(
+        (item) => item.name !== 'first'
+      ).length || 0;
+    await initAttestationReportContext({
+      address: params?.address || params?.user?.address,
+      requestid: params?.requestid,
+      kaitoRequestId: params?.kaitoRequestId,
+      templateId: params?.attTemplateID || params?.id,
+      attConditions: params?.attConditions,
+      targetCount,
+    });
     await chrome.storage.local.set({
       kaitoPageDecodeInitDebug: {
         at: Date.now(),
@@ -938,6 +965,8 @@ export const pageDecodeMsgListener = async (
       );
       const thisRequestObj = requests[thisRequestUrlIdx];
       const thisResponseObj = responses[thisRequestUrlIdx];
+      const progressKey = `${thisRequestUrlIdx}:${templateRequestUrl}`;
+      const targetCount = requests.filter((item) => item.name !== 'first').length;
 
       const { url, urlType, queryParams, ignoreResponse } = thisRequestObj;
       const bodyMatchesTemplate = (requestInfo, templateRequest) => {
@@ -969,7 +998,7 @@ export const pageDecodeMsgListener = async (
 
       if (!thisRequestUrlFoundFlag) {
         if (ignoreResponse) {
-	          Object.values(requestsMap).some((sInfo) => {
+          const ignoredTargetFound = Object.values(requestsMap).some((sInfo) => {
 	            if (sInfo.templateRequestUrl === url && sInfo.headers) {
 	              if (
 	                thisRequestObj?.method &&
@@ -985,7 +1014,16 @@ export const pageDecodeMsgListener = async (
               sInfo.isTarget = 1;
               return true;
             }
+            return false;
           });
+          if (ignoredTargetFound) {
+            skippedReplayTargetKeys.add(progressKey);
+            await updateAttestationStepProgress('replayed', {
+              completed: replayedTargetKeys.size,
+              skipped: skippedReplayTargetKeys.size,
+              total: targetCount,
+            });
+          }
         } else {
           const matchRequestIdArr = Object.keys(requestsMap).filter((key) => {
             // `onBeforeRequest` stores a body under its requestId before
@@ -1122,6 +1160,12 @@ export const pageDecodeMsgListener = async (
                 // readiness on a background preflight that cannot reproduce the
                 // page context.
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
+                skippedReplayTargetKeys.add(progressKey);
+                await updateAttestationStepProgress('replayed', {
+                  completed: replayedTargetKeys.size,
+                  skipped: skippedReplayTargetKeys.size,
+                  total: targetCount,
+                });
                 break;
               }
               if (requestsMap[matchRequestId].type === 'main_frame') {
@@ -1137,6 +1181,17 @@ export const pageDecodeMsgListener = async (
                   );
                   if (isTargetUrl) {
                     storeRequestsMap(matchRequestId, { isTarget: 1 });
+                    replayedTargetKeys.add(progressKey);
+                    validatedTargetKeys.add(progressKey);
+                    await updateAttestationStepProgress('replayed', {
+                      completed: replayedTargetKeys.size,
+                      skipped: skippedReplayTargetKeys.size,
+                      total: targetCount,
+                    });
+                    await updateAttestationStepProgress('validated', {
+                      completed: validatedTargetKeys.size,
+                      total: targetCount,
+                    });
                     break;
                   }
                 }
@@ -1172,6 +1227,14 @@ export const pageDecodeMsgListener = async (
                   jsonPathArr,
                   matchRequestUrlResult
                 );
+              }
+              if (matchRequestUrlResult) {
+                replayedTargetKeys.add(progressKey);
+                await updateAttestationStepProgress('replayed', {
+                  completed: replayedTargetKeys.size,
+                  skipped: skippedReplayTargetKeys.size,
+                  total: targetCount,
+                });
               }
               const notMetHandler = async () => {
                 const notMetCode = '00104';
@@ -1284,6 +1347,11 @@ export const pageDecodeMsgListener = async (
               );
               if (isTargetUrl) {
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
+                validatedTargetKeys.add(progressKey);
+                await updateAttestationStepProgress('validated', {
+                  completed: validatedTargetKeys.size,
+                  total: targetCount,
+                });
                 break;
               } else {
                 if (requestsMap[matchRequestId]) {
@@ -1416,6 +1484,10 @@ export const pageDecodeMsgListener = async (
             }
           });
           f = captureNum === interceptorRequests.length;
+          await updateAttestationStepProgress('captured', {
+            completed: captureNum,
+            total: interceptorRequests.length,
+          });
 
 	          let fl = false;
 	          let allRequestUrlFoundFlag = false;
@@ -1490,8 +1562,36 @@ export const pageDecodeMsgListener = async (
 	          }
 	          return fl;
 	        } else {
+            const capturedCount = interceptorRequests.filter((request) =>
+              Object.values(requestsMap).some((requestInfo) => {
+                if (typeof requestInfo?.url !== 'string') {
+                  return false;
+                }
+                if (
+                  request.method &&
+                  requestInfo?.method &&
+                  String(request.method).toUpperCase() !==
+                    String(requestInfo.method).toUpperCase()
+                ) {
+                  return false;
+                }
+                return (
+                  checkIsRequiredUrl({
+                    requestUrl: requestInfo?.url,
+                    requiredUrl: request.url,
+                    urlType: request.urlType,
+                    queryParams: request.queryParams,
+                  }) ||
+                  binanceRequestMatchesTemplate(requestInfo?.url, request)
+                );
+              })
+            ).length;
+            await updateAttestationStepProgress('captured', {
+              completed: capturedCount,
+              total: interceptorRequests.length,
+            });
 	          await writeBinanceReadinessDebug({
-	            captured: 0,
+	            captured: capturedCount,
 	            basicReady: false,
 	            allTargetsFound: false,
 	            reason: 'not_enough_requests',
@@ -2939,4 +3039,5 @@ const chandleClose = async (params, processAlgorithmReq) => {
 
   resetVarsFn();
   handlerForSdk(processAlgorithmReq, 'cancel');
+  await clearAttestationReportContext();
 };

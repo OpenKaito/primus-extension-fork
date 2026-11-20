@@ -83,36 +83,35 @@ const SetPwdDialog: React.FC<SetPwdDialogProps> = memo(({ onSubmit }) => {
     const Leagal = Object.values(formLegalObj).every((i) => i === 1);
     return Leagal;
   }, [formLegalObj]);
-  const fetchBindUserAddress = useCallback(() => {
-    chrome.storage.local.get(['userInfo'], (storedData) => {
-      if (storedData['userInfo']) {
-        const padoServicePortListener = async function (message: any) {
-          if (message.resMethodName === 'bindUserAddress') {
-            const { res } = message;
-            console.log('page_get:bindUserAddress:', res);
-            if (res) {
-              await dispatch(initWalletAddressActionAsync());
-              await dispatch(initIfHadPwdAsync());
-              onSubmit();
-            } else {
-            }
+  const fetchBindUserAddress = useCallback(async () => {
+    const storedData = await chrome.storage.local.get(['userInfo']);
+    if (storedData['userInfo']) {
+      const padoServicePortListener = async function (message: any) {
+        if (message.resMethodName === 'bindUserAddress') {
+          const { res } = message;
+          console.log('page_get:bindUserAddress:', res);
+          if (res) {
+            await dispatch(initWalletAddressActionAsync());
+            await dispatch(initIfHadPwdAsync());
+            onSubmit();
+          } else {
           }
-        };
-        padoServicePort.onMessage.addListener(padoServicePortListener);
+        }
+      };
+      padoServicePort.onMessage.addListener(padoServicePortListener);
 
-        postMsg(padoServicePort, {
-          fullScreenType: 'padoService',
-          reqMethodName: 'bindUserAddress',
-          params: {
-            password: pswForm.password,
-          },
-        });
-        dispatch({
-          type: 'setUserPassword',
-          payload: pswForm.password,
-        });
-      }
-    });
+      postMsg(padoServicePort, {
+        fullScreenType: 'padoService',
+        reqMethodName: 'bindUserAddress',
+        params: {
+          password: pswForm.password,
+        },
+      });
+      dispatch({
+        type: 'setUserPassword',
+        payload: pswForm.password,
+      });
+    }
   }, [dispatch, onSubmit, padoServicePort, pswForm.password]);
   const handleClickNext = useCallback(async () => {
     if (!formLegal) {
