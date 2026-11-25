@@ -47,6 +47,10 @@ describe('attestation report context', () => {
       kaitoRequestId: 'kaito-1',
       templateId: 'template-1',
       attConditions: [[{ op: '>', value: 500 }]],
+      source: 'binance',
+      schemaType: 'ASSETS',
+      sigFormat: 'EVM',
+      event: 'assets-proof',
       targetCount: 1,
     });
     await recordAttestationAlgorithmResponse(
@@ -68,9 +72,9 @@ describe('attestation report context', () => {
     assert.equal(rawData.address, '0xabc');
     assert.equal(rawData.requestid, 'primus-1');
     assert.equal(rawData.kaitoRequestId, 'kaito-1');
-    assert.deepEqual(rawData.detail.attConditions, [
-      [{ op: '>', value: 500 }],
-    ]);
+    assert.equal(values[ATTESTATION_REPORT_CONTEXT_KEY].source, 'binance');
+    assert.equal(values[ATTESTATION_REPORT_CONTEXT_KEY].schemaType, 'ASSETS');
+    assert.deepEqual(rawData.detail.attConditions, [[{ op: '>', value: 500 }]]);
     assert.equal(rawData.ext.getAttestationResCount, 1);
     assert.equal(rawData.ext.getAttestationResultResCount, 0);
   });
@@ -180,10 +184,7 @@ describe('attestation report context', () => {
 
     assert.equal(rawData.requestid, 'primus-1');
     assert.equal(rawData.ext, undefined);
-    assert.equal(
-      values[ATTESTATION_REPORT_CONTEXT_KEY].requestid,
-      'primus-2'
-    );
+    assert.equal(values[ATTESTATION_REPORT_CONTEXT_KEY].requestid, 'primus-2');
   });
 
   it('does not enrich or clear an event without its original request ID', async () => {
@@ -197,9 +198,6 @@ describe('attestation report context', () => {
 
     assert.equal(rawData.requestid, undefined);
     assert.equal(rawData.ext, undefined);
-    assert.equal(
-      values[ATTESTATION_REPORT_CONTEXT_KEY].requestid,
-      'primus-1'
-    );
+    assert.equal(values[ATTESTATION_REPORT_CONTEXT_KEY].requestid, 'primus-1');
   });
 });

@@ -120,7 +120,9 @@ export const padoZKAttestationJSSDKMsgListener = async (
         padoZKAttestationJSSDKBeginAttest: sdkVersion || '1',
       });
 
-      const { webProofTypes } = await chrome.storage.local.get(['webProofTypes']);
+      const { webProofTypes } = await chrome.storage.local.get([
+        'webProofTypes',
+      ]);
       const attestationTypeIdList = (
         webProofTypes ? JSON.parse(webProofTypes) : []
       ).map((i) => ({
@@ -229,7 +231,8 @@ export const padoZKAttestationJSSDKMsgListener = async (
       try {
         const lastActiveRequest = JSON.parse(lastActiveRequestAttestationStr);
         const startedAt = Number(lastActiveRequest?.kaitoStartedAt || 0);
-        staleActiveRequest = !startedAt || Date.now() - startedAt > 2 * 60 * 1000;
+        staleActiveRequest =
+          !startedAt || Date.now() - startedAt > 2 * 60 * 1000;
       } catch (error) {
         staleActiveRequest = true;
       }
@@ -239,23 +242,25 @@ export const padoZKAttestationJSSDKMsgListener = async (
           'padoZKAttestationJSSDKBeginAttest',
         ]);
       } else {
-      await chrome.storage.local.remove(['padoZKAttestationJSSDKBeginAttest']);
-      const desc =
-        'An attestation process is currently being generated. Please try again later.';
-      let resParams = { result: false };
-      if (!resParams.result) {
-        resParams.errorData = {
-          title: '',
-          desc,
-          code: '00003',
-        };
-      }
-      chrome.tabs.sendMessage(dappTabId, {
-        type: 'padoZKAttestationJSSDK',
-        name: 'startAttestationRes',
-        params: resParams,
-      });
-      return;
+        await chrome.storage.local.remove([
+          'padoZKAttestationJSSDKBeginAttest',
+        ]);
+        const desc =
+          'An attestation process is currently being generated. Please try again later.';
+        let resParams = { result: false };
+        if (!resParams.result) {
+          resParams.errorData = {
+            title: '',
+            desc,
+            code: '00003',
+          };
+        }
+        chrome.tabs.sendMessage(dappTabId, {
+          type: 'padoZKAttestationJSSDK',
+          name: 'startAttestationRes',
+          params: resParams,
+        });
+        return;
       }
     }
     let activeWebProofTemplate = {};
@@ -336,8 +341,8 @@ export const padoZKAttestationJSSDKMsgListener = async (
         const { rc, result } = remoteOk
           ? remote
           : kaitoTemplate
-            ? { rc: 0, result: kaitoTemplate }
-            : { rc: -1, result: undefined };
+          ? { rc: 0, result: kaitoTemplate }
+          : { rc: -1, result: undefined };
         const templateResult = result;
         if (kaitoTemplate) {
           const localKeys = Object.keys(kaitoTemplate);
@@ -781,7 +786,10 @@ export const padoZKAttestationJSSDKMsgListener = async (
       padoZKAttestationJSSDKWalletAddress: walletAddress,
     });
     console.log('debuge-zktls-startAttestation2', walletAddress);
-    chrome.storage.local.remove(['beginAttest', 'getAttestationResultRes']);
+    await chrome.storage.local.remove([
+      'beginAttest',
+      'getAttestationResultRes',
+    ]);
     await chrome.storage.local.set({
       padoZKAttestationJSSDKAttestationPresetParams: JSON.stringify(
         Object.assign({ chainName }, activeAttestationParams)
@@ -815,9 +823,12 @@ export const padoZKAttestationJSSDKMsgListener = async (
         processAlgorithmReq
       );
       await appendKaitoPadoTrace('background_pageDecode_init_called', {
-        hasDataSource: Boolean(currRequestTemplate?.dataSource || currRequestTemplate?.dataSourceId),
+        hasDataSource: Boolean(
+          currRequestTemplate?.dataSource || currRequestTemplate?.dataSourceId
+        ),
         hasDatasourceTemplate: Boolean(currRequestTemplate?.datasourceTemplate),
-        requestCount: currRequestTemplate?.datasourceTemplate?.requests?.length || 0,
+        requestCount:
+          currRequestTemplate?.datasourceTemplate?.requests?.length || 0,
       });
     } catch (e) {
       await appendKaitoPadoTrace('background_pageDecode_init_error', {
@@ -876,6 +887,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
       {
         name: 'end',
         params: {
+          requestid: activeAttestationParams.requestid,
           result: 'warn',
           failReason: {
             ...msgObj,
@@ -1080,14 +1092,22 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
   const {
     padoZKAttestationJSSDKBeginAttest,
     padoZKAttestationJSSDKDappTabId: dappTabId,
+    padoZKAttestationJSSDKAttestationPresetParams,
   } = await chrome.storage.local.get([
     'padoZKAttestationJSSDKBeginAttest',
     'padoZKAttestationJSSDKDappTabId',
+    'padoZKAttestationJSSDKAttestationPresetParams',
   ]);
   if (tabId === dappTabId && padoZKAttestationJSSDKBeginAttest) {
+    const requestid = padoZKAttestationJSSDKAttestationPresetParams
+      ? JSON.parse(padoZKAttestationJSSDKAttestationPresetParams).requestid
+      : undefined;
     pageDecodeMsgListener({
       type: 'pageDecode',
       name: 'cancel',
+      params: {
+        requestid,
+      },
     });
   }
 });

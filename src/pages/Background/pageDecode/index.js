@@ -74,8 +74,10 @@ import {
   sendMsgToTab,
 } from '../utils/utils';
 import {
+  ATTESTATION_REPORT_CONTEXT_KEY,
   addSDKParamsToReportParamsFn,
   clearAttestationReportContext,
+  enrichAttestationReportRawData,
   initAttestationReportContext,
   updateAttestationStepProgress,
 } from '../utils/reportEvent.js';
@@ -85,6 +87,15 @@ import {
   describeTargetCheck,
   mergeTargetCheck,
 } from './targetCheckDiag.js';
+import {
+  PAGE_DECODE_PHASE,
+  PAGE_DECODE_SESSION_KEY,
+  createSerialQueue,
+  createSingleFlight,
+  hasCompleteCaptureCheckpoint,
+  resolvePageDecodeAttestationState,
+  transitionPageDecodeSession,
+} from './attestationState.js';
 import {
   extraRequestFn2,
   extraRequestHtmlFn,
@@ -113,6 +124,7 @@ let terminalResult = null;
 let operationType = null;
 let RequestsHasCompleted = false;
 let formatAlgorithmParams = null;
+let captureActivityRevision = 0;
 let preAlgorithmStatus = '';
 let preAlgorithmTimer = null;
 let preAlgorithmFlag = false;
@@ -124,12 +136,19 @@ let onCompletedFn = () => {};
 let requestsMap = {};
 let reportRequestIds = [];
 let hasStartedPageDecodeAttestation = false;
+const pageDecodeSessionQueue = createSerialQueue();
+const pageDecodeCaptureCheckpointQueue = createSerialQueue();
+const pageDecodeReportOutboxQueue = createSerialQueue();
+const startPageDecodeAttestationSingleFlight = createSingleFlight();
 let replayedTargetKeys = new Set();
 let validatedTargetKeys = new Set();
 let skippedReplayTargetKeys = new Set();
+let externalCapturedTargetKeys = new Set();
 let chatgptAuthorizationHeader = '';
 let chatgptReadyPollTimer = null;
 const CHATGPT_AUTH_HEADER_SESSION_KEY = 'kaitoChatGptAuthorizationHeader';
+const PAGE_DECODE_CAPTURE_CHECKPOINT_KEY = 'pageDecodeCaptureCheckpoint';
+const PAGE_DECODE_REPORT_OUTBOX_KEY = 'pageDecodeReportOutbox';
 const isChatGptTemplateTargetUrl = (url) => {
   if (getActiveTemplateDataSource() !== 'chatgpt' || !url) {
     return false;
@@ -176,7 +195,9 @@ const removeRequestsMap = async (url) => {
   //   'https://www.tiktok.com/passport/web/account/info/',
   //   'https://api.x.com/1.1/account/settings.json',
   // ]);
-  delete requestsMap[url];
+  if (Object.prototype.hasOwnProperty.call(requestsMap, url)) {
+    delete requestsMap[url];
+  }
 };
 const storeRequestsMap = (url, urlInfo) => {
   const lastStoreRequestObj = requestsMap[url] || {};
@@ -195,6 +216,38 @@ const storeRequestsMap = (url, urlInfo) => {
   });
 
   return requestsMap[url];
+};
+const recordExternalCaptureActivity = async (
+  requestid,
+  stage,
+  targetKey
+) => {
+  if (!requestid || activeTemplate?.requestid !== requestid) {
+    return false;
+  }
+  if (targetKey) {
+    externalCapturedTargetKeys.add(String(targetKey));
+  }
+  captureActivityRevision += 1;
+  const targetCount =
+    activeTemplate?.datasourceTemplate?.requests?.filter(
+      (request) => request.name !== 'first'
+    ).length || 0;
+  const checkpoint = {
+    requestid,
+    observed: true,
+    lastCaptureAt: Date.now(),
+    revision: captureActivityRevision,
+    stage,
+    matchedTargetCount: externalCapturedTargetKeys.size,
+    targetCount,
+  };
+  await pageDecodeCaptureCheckpointQueue.run(() =>
+    chrome.storage.local.set({
+      [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: checkpoint,
+    })
+  );
+  return true;
 };
 const redactRequestsMapForKaitoDebug = () =>
   Object.fromEntries(
@@ -255,17 +308,130 @@ const resetVarsFn = () => {
   preAlgorithmFlag = false;
   chatgptHasLogin = false;
   requestsMap = {};
+  captureActivityRevision = 0;
   reportRequestIds = [];
   hasStartedPageDecodeAttestation = false;
   replayedTargetKeys = new Set();
   validatedTargetKeys = new Set();
   skippedReplayTargetKeys = new Set();
+  externalCapturedTargetKeys = new Set();
   chatgptAuthorizationHeader = '';
   if (chatgptReadyPollTimer) {
     clearInterval(chatgptReadyPollTimer);
     chatgptReadyPollTimer = null;
   }
   chrome.runtime.onMessage.removeListener(listenerFn);
+};
+
+const transitionPageDecodeSessionState = ({
+  requestid,
+  phase,
+  terminalResult: nextTerminalResult,
+  replace = false,
+  allowedFrom,
+  storageEntries = {},
+  guard,
+}) =>
+  pageDecodeSessionQueue.run(async () => {
+    const { [PAGE_DECODE_SESSION_KEY]: currentSession } =
+      await chrome.storage.local.get([PAGE_DECODE_SESSION_KEY]);
+    if (guard && !guard()) {
+      return {
+        applied: false,
+        guardRejected: true,
+        session: currentSession || null,
+      };
+    }
+    const transition = transitionPageDecodeSession(currentSession, {
+      requestid,
+      phase,
+      terminalResult: nextTerminalResult,
+      replace,
+      allowedFrom,
+    });
+    if (!transition.applied) {
+      return transition;
+    }
+    await chrome.storage.local.set({
+      [PAGE_DECODE_SESSION_KEY]: transition.session,
+      ...storageEntries,
+    });
+    return transition;
+  });
+
+const initializePageDecodeSession = (requestid) =>
+  pageDecodeSessionQueue.run(async () => {
+    if (!requestid) {
+      return { applied: false, session: null };
+    }
+    const { activeRequestAttestation } = await chrome.storage.local.get([
+      'activeRequestAttestation',
+    ]);
+    let storedRequestid;
+    try {
+      storedRequestid = JSON.parse(activeRequestAttestation || '{}').requestid;
+    } catch (error) {
+      storedRequestid = null;
+    }
+    if (storedRequestid && storedRequestid !== requestid) {
+      await chrome.storage.local.remove([
+        'beginAttest',
+        'activeRequestAttestation',
+        'getAttestationResultRes',
+      ]);
+    }
+    const transition = transitionPageDecodeSession(null, {
+      requestid,
+      phase: PAGE_DECODE_PHASE.CAPTURING,
+      replace: true,
+    });
+    await pageDecodeCaptureCheckpointQueue.run(() =>
+      chrome.storage.local.set({
+        [PAGE_DECODE_SESSION_KEY]: transition.session,
+        [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: {
+          requestid,
+          observed: false,
+          lastCaptureAt: null,
+          revision: 0,
+          matchedTargetCount: 0,
+          targetCount:
+            activeTemplate?.datasourceTemplate?.requests?.filter(
+              (request) => request.name !== 'first'
+            ).length || 0,
+        },
+      })
+    );
+    return transition;
+  });
+
+const getAuthoritativePageDecodeState = async (requestid) => {
+  const {
+    [PAGE_DECODE_SESSION_KEY]: pageDecodeSession,
+    beginAttest,
+    activeRequestAttestation,
+    padoZKAttestationJSSDKAttestationPresetParams,
+    [ATTESTATION_REPORT_CONTEXT_KEY]: attestationReportContext,
+  } = await chrome.storage.local.get([
+    PAGE_DECODE_SESSION_KEY,
+    'beginAttest',
+    'activeRequestAttestation',
+    'padoZKAttestationJSSDKAttestationPresetParams',
+    ATTESTATION_REPORT_CONTEXT_KEY,
+  ]);
+
+  return resolvePageDecodeAttestationState({
+    requestid,
+    pageDecodeSession,
+    activeTemplateRequestid: activeTemplate?.requestid,
+    isReady: isReadyRequest,
+    hasStarted: hasStartedPageDecodeAttestation,
+    terminalResult,
+    beginAttest,
+    activeRequestAttestation,
+    attestationPresetParams:
+      padoZKAttestationJSSDKAttestationPresetParams,
+    attestationReportContext,
+  });
 };
 const getChatGptAuthorizationHeader = () => {
   if (chatgptAuthorizationHeader) {
@@ -694,13 +860,94 @@ const extraRequestFn = async () => {
     console.log('fetch chatgpt conversation error', e);
   }
 };
-const eventReportGenerateFn = async (rawData) => {
-  var eventInfo = {
-    eventType: 'ATTESTATION_GENERATE',
-    rawData,
-  };
-  eventReport(eventInfo);
+const removePageDecodeReportOutboxEntry = (reportEventId) =>
+  pageDecodeReportOutboxQueue.run(async () => {
+    const { [PAGE_DECODE_REPORT_OUTBOX_KEY]: outbox = {} } =
+      await chrome.storage.local.get([PAGE_DECODE_REPORT_OUTBOX_KEY]);
+    if (!outbox[reportEventId]) {
+      return;
+    }
+    const nextOutbox = { ...outbox };
+    delete nextOutbox[reportEventId];
+    await chrome.storage.local.set({
+      [PAGE_DECODE_REPORT_OUTBOX_KEY]: nextOutbox,
+    });
+  });
+
+const deliverPageDecodeReport = async (entry, persist = true) => {
+  if (persist) {
+    await pageDecodeReportOutboxQueue.run(async () => {
+      const { [PAGE_DECODE_REPORT_OUTBOX_KEY]: outbox = {} } =
+        await chrome.storage.local.get([PAGE_DECODE_REPORT_OUTBOX_KEY]);
+      const nextOutbox = {
+        ...outbox,
+        [entry.reportEventId]: entry,
+      };
+      const retainedOutbox = Object.fromEntries(
+        Object.entries(nextOutbox)
+          .sort(
+            ([, left], [, right]) =>
+              (right.createdAt || 0) - (left.createdAt || 0)
+          )
+          .slice(0, 50)
+      );
+      await chrome.storage.local.set({
+        [PAGE_DECODE_REPORT_OUTBOX_KEY]: retainedOutbox,
+      });
+    });
+  }
+  const response = await eventReport({
+    eventType: entry.eventType,
+    rawData: { ...entry.rawData },
+  });
+  if (response === undefined) {
+    throw new Error('event report did not return a response');
+  }
+  await removePageDecodeReportOutboxEntry(entry.reportEventId);
+  return response;
 };
+
+const retryPendingPageDecodeReports = async () => {
+  const { [PAGE_DECODE_REPORT_OUTBOX_KEY]: outbox = {} } =
+    await chrome.storage.local.get([PAGE_DECODE_REPORT_OUTBOX_KEY]);
+  for (const entry of Object.values(outbox)) {
+    try {
+      await deliverPageDecodeReport(entry, false);
+    } catch (error) {
+      console.log('retry pageDecode report failed', entry.reportEventId, error);
+    }
+  }
+};
+
+const eventReportGenerateFn = async (rawData) => {
+  const eventType = 'ATTESTATION_GENERATE';
+  let enrichedRawData = rawData;
+  try {
+    enrichedRawData = await enrichAttestationReportRawData(eventType, rawData);
+  } catch (error) {
+    console.log('enrich pageDecode report failed', error);
+  }
+  const reportEventId = `${rawData.requestid}:${eventType}:${
+    rawData.detail?.code || 'unknown'
+  }`;
+  return deliverPageDecodeReport({
+    reportEventId,
+    eventType,
+    rawData: {
+      ...enrichedRawData,
+      reportEventId,
+    },
+    createdAt: Date.now(),
+  });
+};
+retryPendingPageDecodeReports().catch((error) => {
+  console.log('initial pageDecode report retry failed', error);
+});
+const shouldIgnoreInterceptionFail = (state) =>
+  !state.isCurrentRequest ||
+  state.isReady ||
+  state.hasStarted ||
+  Boolean(state.terminalResult);
 const recordTargetCheck = async (templateUrl, check) => {
   try {
     const { [TARGET_CHECK_DEBUG_KEY]: record } = await chrome.storage.local.get(
@@ -713,7 +960,71 @@ const recordTargetCheck = async (templateUrl, check) => {
     console.log('record target check error', e);
   }
 };
-const handle00013 = async () => {
+const handle00013 = async (requestid, expectedCaptureRevision) => {
+  let authoritativeState = await getAuthoritativePageDecodeState(requestid);
+  if (!requestid && authoritativeState.requestid) {
+    return { accepted: false, ...authoritativeState };
+  }
+  if (shouldIgnoreInterceptionFail(authoritativeState)) {
+    console.log('ignore interceptionFail because attestation is already active');
+    return { accepted: false, ...authoritativeState };
+  }
+  if (!activeTemplate?.requestid && requestid) {
+    const { [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: captureCheckpoint } =
+      await chrome.storage.local.get([PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]);
+    if (hasCompleteCaptureCheckpoint(captureCheckpoint, requestid)) {
+      return {
+        accepted: false,
+        captureInterrupted: true,
+        ...authoritativeState,
+      };
+    }
+  }
+  const errorObj = {
+    code: '00013',
+    sourcePageTip: 'Target data missing',
+  };
+  const nextTerminalResult = {
+    result: 'warn',
+    failReason: errorObj,
+    requestid: requestid || activeTemplate?.requestid,
+  };
+  if (requestid) {
+    const captureRevisionGuard =
+      expectedCaptureRevision === undefined
+        ? undefined
+        : () => captureActivityRevision === expectedCaptureRevision;
+    let failureTransition = await transitionPageDecodeSessionState({
+      requestid,
+      phase: PAGE_DECODE_PHASE.TERMINAL,
+      terminalResult: nextTerminalResult,
+      allowedFrom: [PAGE_DECODE_PHASE.CAPTURING],
+      guard: captureRevisionGuard,
+    });
+    if (!failureTransition.applied && !failureTransition.session) {
+      failureTransition = await transitionPageDecodeSessionState({
+        requestid,
+        phase: PAGE_DECODE_PHASE.TERMINAL,
+        terminalResult: nextTerminalResult,
+        replace: true,
+        guard: captureRevisionGuard,
+      });
+    }
+    if (failureTransition.guardRejected) {
+      authoritativeState = await getAuthoritativePageDecodeState(requestid);
+      return {
+        accepted: false,
+        retryReadiness: true,
+        ...authoritativeState,
+      };
+    }
+    if (!failureTransition.applied) {
+      authoritativeState = await getAuthoritativePageDecodeState(requestid);
+      return { accepted: false, ...authoritativeState };
+    }
+  }
+  terminalResult = nextTerminalResult;
+
   let rawData = {};
   let baseRawData = {
     status: 'FAILED',
@@ -727,10 +1038,12 @@ const handle00013 = async () => {
     padoZKAttestationJSSDKBeginAttest,
     padoZKAttestationJSSDKAttestationPresetParams,
     activeRequestAttestation,
+    [ATTESTATION_REPORT_CONTEXT_KEY]: attestationReportContext,
   } = await chrome.storage.local.get([
     'padoZKAttestationJSSDKBeginAttest',
     'padoZKAttestationJSSDKAttestationPresetParams',
     'activeRequestAttestation',
+    ATTESTATION_REPORT_CONTEXT_KEY,
   ]);
   if (padoZKAttestationJSSDKBeginAttest) {
     if (padoZKAttestationJSSDKAttestationPresetParams) {
@@ -738,9 +1051,10 @@ const handle00013 = async () => {
         padoZKAttestationJSSDKAttestationPresetParams
       );
       if (
+        (!requestid ||
+          parsedActiveRequestAttestation.requestid === requestid) &&
         !reportRequestIds.includes(parsedActiveRequestAttestation.requestid)
       ) {
-        reportRequestIds.push(parsedActiveRequestAttestation.requestid);
         const userAddress = parsedActiveRequestAttestation?.ext
           ?.appSignParameters
           ? JSON.parse(parsedActiveRequestAttestation.ext.appSignParameters)
@@ -762,7 +1076,6 @@ const handle00013 = async () => {
           rawData.event = parsedActiveRequestAttestation.event;
         }
         rawData = await addSDKParamsToReportParamsFn(rawData);
-        eventReportGenerateFn(rawData);
       }
     }
   } else {
@@ -771,9 +1084,10 @@ const handle00013 = async () => {
         activeRequestAttestation
       );
       if (
+        (!requestid ||
+          parsedActiveRequestAttestation.requestid === requestid) &&
         !reportRequestIds.includes(parsedActiveRequestAttestation.requestid)
       ) {
-        reportRequestIds.push(parsedActiveRequestAttestation.requestid);
         rawData = {
           source: parsedActiveRequestAttestation.source,
           schemaType: parsedActiveRequestAttestation.schemaType,
@@ -785,19 +1099,121 @@ const handle00013 = async () => {
         if (parsedActiveRequestAttestation.event) {
           rawData.event = parsedActiveRequestAttestation.event;
         }
-        eventReportGenerateFn(rawData);
       }
     }
   }
-  errorFn({
-    title:
-      'Target data missing. Please check that the JSON path of the data in the response from the request URL matches your template.',
-    desc: 'Target data missing. Please check that the JSON path of the data in the response from the request URL matches your template.',
-    code: '00013',
+  const fallbackRequestid =
+    requestid ||
+    attestationReportContext?.requestid ||
+    activeTemplate?.requestid;
+  if (
+    Object.keys(rawData).length === 0 &&
+    fallbackRequestid &&
+    !reportRequestIds.includes(fallbackRequestid) &&
+    (!attestationReportContext?.requestid ||
+      attestationReportContext.requestid === fallbackRequestid)
+  ) {
+    const fallbackContext = attestationReportContext || activeTemplate || {};
+    rawData = {
+      source:
+        fallbackContext.source ||
+        fallbackContext.dataSource ||
+        fallbackContext.dataSourceId,
+      schemaType: fallbackContext.schemaType,
+      sigFormat: fallbackContext.sigFormat,
+      event: fallbackContext.event || fallbackContext.attestOrigin,
+      attestOrigin: fallbackContext.attestOrigin,
+      templateId:
+        fallbackContext.templateId ||
+        fallbackContext.attTemplateID ||
+        fallbackContext.id,
+      address: fallbackContext.address || fallbackContext.user?.address,
+      requestid: fallbackRequestid,
+      ...baseRawData,
+    };
+    rawData = await addSDKParamsToReportParamsFn(rawData);
+  }
+  const completionTasks = [];
+  if (Object.keys(rawData).length > 0) {
+    if (rawData.requestid) {
+      reportRequestIds.push(rawData.requestid);
+    }
+    completionTasks.push({
+      name: 'event report',
+      promise: eventReportGenerateFn(rawData),
+    });
+  }
+  completionTasks.push({
+    name: 'SDK notification',
+    promise: errorFn({
+      title:
+        'Target data missing. Please check that the JSON path of the data in the response from the request URL matches your template.',
+      desc: 'Target data missing. Please check that the JSON path of the data in the response from the request URL matches your template.',
+      code: '00013',
+    }),
   });
+  const completionResults = await Promise.allSettled(
+    completionTasks.map(({ promise }) => promise)
+  );
+  completionResults.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.log(
+        `00013 ${completionTasks[index].name} failed`,
+        result.reason
+      );
+    }
+  });
+  authoritativeState = await getAuthoritativePageDecodeState(requestid);
+  return {
+    accepted: true,
+    ...authoritativeState,
+    terminalResult: nextTerminalResult,
+  };
 };
 
-const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
+const handleDataSourcePageDialogTimeout = async (
+  processAlgorithmReq,
+  requestid
+) => {
+  let authoritativeState = await getAuthoritativePageDecodeState(requestid);
+  if (!requestid && authoritativeState.requestid) {
+    return { accepted: false, ...authoritativeState };
+  }
+  if (!authoritativeState.isCurrentRequest) {
+    return { accepted: false, ...authoritativeState };
+  }
+  const timeoutRequestid =
+    requestid || activeTemplate?.requestid || authoritativeState.requestid;
+  const timeoutTerminalResult = {
+    result: 'warn',
+    failReason: {
+      code: '00002',
+      sourcePageTip: 'Request Timed Out',
+    },
+    requestid: timeoutRequestid,
+  };
+  if (timeoutRequestid) {
+    let transition = await transitionPageDecodeSessionState({
+      requestid: timeoutRequestid,
+      phase: PAGE_DECODE_PHASE.TERMINAL,
+      terminalResult: timeoutTerminalResult,
+    });
+    if (!transition.applied && !transition.session) {
+      transition = await transitionPageDecodeSessionState({
+        requestid: timeoutRequestid,
+        phase: PAGE_DECODE_PHASE.TERMINAL,
+        terminalResult: timeoutTerminalResult,
+        replace: true,
+      });
+    }
+    if (!transition.applied) {
+      authoritativeState =
+        await getAuthoritativePageDecodeState(timeoutRequestid);
+      return { accepted: false, ...authoritativeState };
+    }
+  }
+  terminalResult = timeoutTerminalResult;
+
   let rawData = {};
   let baseRawData = {
     status: 'FAILED',
@@ -811,10 +1227,12 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
     padoZKAttestationJSSDKBeginAttest,
     padoZKAttestationJSSDKAttestationPresetParams,
     activeRequestAttestation,
+    [ATTESTATION_REPORT_CONTEXT_KEY]: attestationReportContext,
   } = await chrome.storage.local.get([
     'padoZKAttestationJSSDKBeginAttest',
     'padoZKAttestationJSSDKAttestationPresetParams',
     'activeRequestAttestation',
+    ATTESTATION_REPORT_CONTEXT_KEY,
   ]);
   const eventReportFn = async (rawData) => {
     const { beginAttest, getAttestationResultRes } =
@@ -823,17 +1241,23 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
         'getAttestationResultRes',
       ]);
 
+    const boundAlgorithmResult =
+      attestationReportContext?.requestid === timeoutRequestid
+        ? attestationReportContext.getAttestationResultRes
+        : getAttestationResultRes;
+
     if (beginAttest === '1') {
-      rawData.getAttestationResultRes = getAttestationResultRes;
+      rawData.getAttestationResultRes = boundAlgorithmResult;
     }
 
-    if (!getAttestationResultRes) {
+    if (!boundAlgorithmResult) {
       var eventInfo = {
         eventType: 'ATTESTATION_GENERATE',
         rawData,
       };
-      eventReport(eventInfo);
+      return eventReport(eventInfo);
     }
+    return undefined;
   };
   if (padoZKAttestationJSSDKBeginAttest) {
     if (padoZKAttestationJSSDKAttestationPresetParams) {
@@ -841,6 +1265,7 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
         padoZKAttestationJSSDKAttestationPresetParams
       );
       if (
+        parsedActiveRequestAttestation.requestid === timeoutRequestid &&
         !reportRequestIds.includes(parsedActiveRequestAttestation.requestid)
       ) {
         reportRequestIds.push(parsedActiveRequestAttestation.requestid);
@@ -865,7 +1290,7 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
           rawData.event = parsedActiveRequestAttestation.event;
         }
         rawData = await addSDKParamsToReportParamsFn(rawData);
-        eventReportFn(rawData);
+        await eventReportFn(rawData);
       }
     }
   } else {
@@ -874,6 +1299,7 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
         activeRequestAttestation
       );
       if (
+        parsedActiveRequestAttestation.requestid === timeoutRequestid &&
         !reportRequestIds.includes(parsedActiveRequestAttestation.requestid)
       ) {
         reportRequestIds.push(parsedActiveRequestAttestation.requestid);
@@ -888,19 +1314,51 @@ const handleDataSourcePageDialogTimeout = async (processAlgorithmReq) => {
         if (parsedActiveRequestAttestation.event) {
           rawData.event = parsedActiveRequestAttestation.event;
         }
-        eventReportFn(rawData);
+        await eventReportFn(rawData);
       }
     }
+  }
+  if (
+    Object.keys(rawData).length === 0 &&
+    timeoutRequestid &&
+    !reportRequestIds.includes(timeoutRequestid) &&
+    attestationReportContext?.requestid === timeoutRequestid
+  ) {
+    rawData = {
+      source: attestationReportContext.source,
+      schemaType: attestationReportContext.schemaType,
+      sigFormat: attestationReportContext.sigFormat,
+      event:
+        attestationReportContext.event ||
+        attestationReportContext.attestOrigin,
+      attestOrigin: attestationReportContext.attestOrigin,
+      templateId: attestationReportContext.templateId,
+      address: attestationReportContext.address,
+      requestid: timeoutRequestid,
+      ...baseRawData,
+    };
+    rawData = await addSDKParamsToReportParamsFn(rawData);
+    reportRequestIds.push(timeoutRequestid);
+    await eventReportFn(rawData);
   }
 
   processAlgorithmReq({
     reqMethodName: 'stop',
   });
-  errorFn({
-    title: 'Request Timed Out',
-    desc: 'The process did not respond within 2 minutes. Please try again later.',
-    code: '00014',
-  });
+  await Promise.allSettled([
+    errorFn({
+      title: 'Request Timed Out',
+      desc: 'The process did not respond within 2 minutes. Please try again later.',
+      code: '00014',
+    }),
+  ]);
+  authoritativeState =
+    await getAuthoritativePageDecodeState(timeoutRequestid);
+  return {
+    accepted: true,
+    ...authoritativeState,
+    terminalResult: timeoutTerminalResult,
+  };
 };
 
 // inject-dynamic
@@ -915,7 +1373,13 @@ export const pageDecodeMsgListener = async (
 ) => {
   const { name, params, operation } = request;
   console.log('pageDecodeMsgListener');
+  if (name === 'getWebRequestReadyStatus') {
+    return getAuthoritativePageDecodeState(params?.requestid);
+  }
   if (name === 'init') {
+    retryPendingPageDecodeReports().catch((error) => {
+      console.log('pageDecode init report retry failed', error);
+    });
     terminalResult = null;
     activeTemplate = {};
     activeTemplate = {
@@ -923,6 +1387,7 @@ export const pageDecodeMsgListener = async (
       dataSource: params?.dataSource || params?.dataSourceId,
     };
     resetVarsFn();
+    await initializePageDecodeSession(params?.requestid);
     const targetCount =
       activeTemplate?.datasourceTemplate?.requests?.filter(
         (item) => item.name !== 'first'
@@ -933,6 +1398,11 @@ export const pageDecodeMsgListener = async (
       kaitoRequestId: params?.kaitoRequestId,
       templateId: params?.attTemplateID || params?.id,
       attConditions: params?.attConditions,
+      source: params?.source || params?.dataSource || params?.dataSourceId,
+      schemaType: params?.schemaType,
+      sigFormat: params?.sigFormat,
+      event: params?.event,
+      attestOrigin: params?.attestOrigin,
       targetCount,
     });
     await chrome.storage.local.set({
@@ -951,6 +1421,7 @@ export const pageDecodeMsgListener = async (
       jumpTo,
       datasourceTemplate: { requests },
     } = activeTemplate;
+    const requestidForCapture = activeTemplate?.requestid;
 
     const checkSDKTargetRequestFn = async (requestId, templateRequestUrl) => {
       const {
@@ -1244,6 +1715,7 @@ export const pageDecodeMsgListener = async (
                   activeTemplate.attestationType,
                   notMetCode
                 );
+                netMetMsg.params.requestid = activeTemplate.requestid;
                 handleEnd(netMetMsg);
                 sendMsgToSdk({
                   type: 'padoZKAttestationJSSDK',
@@ -1366,6 +1838,10 @@ export const pageDecodeMsgListener = async (
       }
     };
 	    const checkWebRequestIsReadyFn = async () => {
+	      const requestidAtCheck = activeTemplate?.requestid;
+	      const isCurrentReadinessCheck = () =>
+	        !requestidAtCheck ||
+	        activeTemplate?.requestid === requestidAtCheck;
 	      const checkReadyStatusFn = async () => {
 	        let {
           dataSource,
@@ -1541,6 +2017,9 @@ export const pageDecodeMsgListener = async (
 	            readyBeforeSpecialCase: fl,
 	          });
 	          if (fl) {
+            if (!isCurrentReadinessCheck()) {
+              return false;
+            }
             if (dataSource === 'chatgpt') {
               // Two-stage serialization: wait for preAlgorithmFn's offline
               // pre-generation to reach RUNNING_PAUSE (preAlgorithmStatus==='1')
@@ -1558,7 +2037,7 @@ export const pageDecodeMsgListener = async (
                 preAlgorithmStatus === '1';
             } else {
               if (!formatAlgorithmParams) {
-                await formatAlgorithmParamsFn();
+                await formatAlgorithmParamsFn(requestidAtCheck);
               }
             }
 	          }
@@ -1601,14 +2080,31 @@ export const pageDecodeMsgListener = async (
 	          return false;
 	        }
 	      };
-      isReadyRequest = await checkReadyStatusFn();
-      if (isReadyRequest) {
+      const nextIsReadyRequest = await checkReadyStatusFn();
+      if (!isCurrentReadinessCheck()) {
+        return;
+      }
+      isReadyRequest = nextIsReadyRequest;
+      if (nextIsReadyRequest) {
+        const readyTransition = await transitionPageDecodeSessionState({
+          requestid: requestidAtCheck,
+          phase: PAGE_DECODE_PHASE.READY,
+        });
+        if (
+          requestidAtCheck &&
+          (activeTemplate?.requestid !== requestidAtCheck ||
+            readyTransition.session?.requestid !== requestidAtCheck ||
+            readyTransition.session?.phase === PAGE_DECODE_PHASE.TERMINAL)
+        ) {
+          return;
+        }
         console.log('all web requests are captured', requestsMap);
         sendMsgToDataSourcePage({
           type: 'pageDecode',
           name: 'webRequestIsReady',
           params: {
-            isReady: isReadyRequest,
+            isReady: nextIsReadyRequest,
+            requestid: requestidAtCheck,
           },
         });
         const { kaitoPrimusDisallowTabCreate } = await chrome.storage.local.get(
@@ -1620,7 +2116,30 @@ export const pageDecodeMsgListener = async (
       }
     };
 
-    const formatAlgorithmParamsFn = async () => {
+    const handleInterceptionFailAfterFinalReadiness = async (requestid) => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const revisionBeforeCheck = captureActivityRevision;
+        try {
+          await checkWebRequestIsReadyFn();
+        } catch (error) {
+          console.log('final readiness check before 00013 failed', error);
+        }
+        if (captureActivityRevision !== revisionBeforeCheck) {
+          continue;
+        }
+        const result = await handle00013(requestid, revisionBeforeCheck);
+        if (!result?.retryReadiness) {
+          return result;
+        }
+      }
+      const authoritativeState =
+        await getAuthoritativePageDecodeState(requestid);
+      return { accepted: false, ...authoritativeState };
+    };
+
+    const formatAlgorithmParamsFn = async (
+      expectedRequestid = activeTemplate?.requestid
+    ) => {
       let {
         dataSource,
         schemaType,
@@ -1966,6 +2485,12 @@ export const pageDecodeMsgListener = async (
           aligorithmParams.requests[2].url.replace('limit=5', 'limit=100');
       }
 
+      if (
+        expectedRequestid &&
+        activeTemplate?.requestid !== expectedRequestid
+      ) {
+        return null;
+      }
       formatAlgorithmParams = aligorithmParams;
       await chrome.storage.local.set({
         kaitoFormatAlgorithmParamsDebug:
@@ -1978,74 +2503,122 @@ export const pageDecodeMsgListener = async (
         form,
         activeTemplate
       );
+      return aligorithmParams;
     };
 
     const startPageDecodeAttestationFn = async () => {
       if (hasStartedPageDecodeAttestation) {
         return;
       }
-      if (!formatAlgorithmParams) {
-        await formatAlgorithmParamsFn();
-      }
-      hasStartedPageDecodeAttestation = true;
-      await chrome.storage.local.set({
-        beginAttest: '1',
-      });
-      let aligorithmParams = Object.assign(
-        { isUserClick: 'true', kaitoStartedAt: Date.now() },
-        formatAlgorithmParams
-      );
-      await chrome.storage.local.set({
-        activeRequestAttestation: JSON.stringify(aligorithmParams),
-      });
-      try {
-      await chrome.storage.local.set({
-        kaitoLastAlgorithmParamsDebug:
-          redactAlgorithmParamsForKaitoDebug(aligorithmParams),
-        kaitoPrimusDebug: {
-          source: aligorithmParams.source,
-          requestCount: aligorithmParams.requests?.length,
-          requests: aligorithmParams.requests?.map((request) => ({
-            name: request.name,
-            url: request.url,
-            method: request.method,
-            hasHeaders: !!request.headers,
-            headerKeys: Object.keys(request.headers || {}),
-            hasCookie: !!request.headers?.Cookie || !!request.headers?.cookie,
-            hasAuthorization:
-              !!request.headers?.Authorization || !!request.headers?.authorization,
-            targetRequestId: request.targetRequestId,
-          })),
-          requestsMap: redactRequestsMapForKaitoDebug(),
-        },
-        });
-      } catch (error) {
-        await chrome.storage.local.set({
-          kaitoPrimusDebugWriteError: error?.message || String(error),
-        });
-      }
-      console.log('pageDecode-algorithmParams', aligorithmParams);
+      const singleFlightKey = activeTemplate?.requestid || 'legacy';
+      return startPageDecodeAttestationSingleFlight.run(
+        singleFlightKey,
+        async () => {
+          if (hasStartedPageDecodeAttestation) {
+            return;
+          }
+          const requestidAtStart = activeTemplate?.requestid;
+          if (!formatAlgorithmParams) {
+            await formatAlgorithmParamsFn(requestidAtStart);
+          }
+          if (
+            requestidAtStart &&
+            activeTemplate?.requestid !== requestidAtStart
+          ) {
+            return;
+          }
+          let aligorithmParams = Object.assign(
+            { isUserClick: 'true', kaitoStartedAt: Date.now() },
+            formatAlgorithmParams
+          );
+          const startStorageEntries = {
+            beginAttest: '1',
+            activeRequestAttestation: JSON.stringify(aligorithmParams),
+          };
+          const startTransition = requestidAtStart
+            ? await transitionPageDecodeSessionState({
+                requestid: requestidAtStart,
+                phase: PAGE_DECODE_PHASE.ATTESTING,
+                storageEntries: startStorageEntries,
+              })
+            : await chrome.storage.local
+                .set(startStorageEntries)
+                .then(() => ({
+                  applied: true,
+                  session: { phase: PAGE_DECODE_PHASE.ATTESTING },
+                }));
+          if (
+            requestidAtStart &&
+            (activeTemplate?.requestid !== requestidAtStart ||
+              startTransition.session?.requestid !== requestidAtStart ||
+              startTransition.session?.phase !==
+                PAGE_DECODE_PHASE.ATTESTING)
+          ) {
+            return;
+          }
+          if (!startTransition.applied) {
+            hasStartedPageDecodeAttestation = true;
+            return;
+          }
+          hasStartedPageDecodeAttestation = true;
+          try {
+            await chrome.storage.local.set({
+              kaitoLastAlgorithmParamsDebug:
+                redactAlgorithmParamsForKaitoDebug(aligorithmParams),
+              kaitoPrimusDebug: {
+                source: aligorithmParams.source,
+                requestCount: aligorithmParams.requests?.length,
+                requests: aligorithmParams.requests?.map((request) => ({
+                  name: request.name,
+                  url: request.url,
+                  method: request.method,
+                  hasHeaders: !!request.headers,
+                  headerKeys: Object.keys(request.headers || {}),
+                  hasCookie:
+                    !!request.headers?.Cookie || !!request.headers?.cookie,
+                  hasAuthorization:
+                    !!request.headers?.Authorization ||
+                    !!request.headers?.authorization,
+                  targetRequestId: request.targetRequestId,
+                })),
+                requestsMap: redactRequestsMapForKaitoDebug(),
+              },
+            });
+          } catch (error) {
+            await chrome.storage.local.set({
+              kaitoPrimusDebugWriteError: error?.message || String(error),
+            });
+          }
+          console.log('pageDecode-algorithmParams', aligorithmParams);
 
-      var eventInfo = {
-        eventType: 'ATTESTATION_START_PAGEDECODE',
-        rawData: {
-          source: aligorithmParams.source,
-          schemaType: aligorithmParams.schemaType,
-          sigFormat: aligorithmParams.sigFormat,
-          attestationId: aligorithmParams.requestid,
-          event: aligorithmParams.event,
-          address: aligorithmParams?.user?.address,
-          requestid: aligorithmParams.requestid,
-          order: '3',
-        },
-      };
-      eventInfo.rawData = await addSDKParamsToReportParamsFn(eventInfo.rawData);
-      eventReport(eventInfo);
-      chrome.runtime.sendMessage({
-        type: 'algorithm',
-        method: 'getAttestation',
-        params: JSON.parse(JSON.stringify(aligorithmParams)),
-      });
+          try {
+            var eventInfo = {
+              eventType: 'ATTESTATION_START_PAGEDECODE',
+              rawData: {
+                source: aligorithmParams.source,
+                schemaType: aligorithmParams.schemaType,
+                sigFormat: aligorithmParams.sigFormat,
+                attestationId: aligorithmParams.requestid,
+                event: aligorithmParams.event,
+                address: aligorithmParams?.user?.address,
+                requestid: aligorithmParams.requestid,
+                order: '3',
+              },
+            };
+            eventInfo.rawData = await addSDKParamsToReportParamsFn(
+              eventInfo.rawData
+            );
+            eventReport(eventInfo);
+          } catch (error) {
+            console.log('report pageDecode attestation start error', error);
+          }
+          chrome.runtime.sendMessage({
+            type: 'algorithm',
+            method: 'getAttestation',
+            params: JSON.parse(JSON.stringify(aligorithmParams)),
+          });
+        }
+      );
     };
 
     const preAlgorithmFn = async () => {
@@ -2233,6 +2806,7 @@ export const pageDecodeMsgListener = async (
           }
         }
         let templateRequestUrl = '';
+        let templateRequestKey = '';
 
         if (attTemplateID === lumaAccountTemplateId) {
           const checkRes = checkIsRequiredUrl({
@@ -2282,6 +2856,9 @@ export const pageDecodeMsgListener = async (
           });
           if (checkRes) {
             templateRequestUrl = r.url;
+            templateRequestKey = `${r.name || ''}:${
+              r.method || method || ''
+            }:${r.url}`;
           }
 
           return checkRes;
@@ -2301,6 +2878,9 @@ export const pageDecodeMsgListener = async (
           if (forcedRequest) {
             isTarget = true;
             templateRequestUrl = forcedRequest.url;
+            templateRequestKey = `${forcedRequest.name || ''}:${
+              forcedRequest.method || method || ''
+            }:${forcedRequest.url}`;
           }
         }
         // console.log(
@@ -2334,10 +2914,16 @@ export const pageDecodeMsgListener = async (
           if (addQueryStr) {
             newCapturedInfo.queryString = addQueryStr;
           }
+          const captureCheckpointPromise = recordExternalCaptureActivity(
+            requestidForCapture,
+            'requestHeaders',
+            templateRequestKey || templateRequestUrl || currRequestUrl
+          );
           const newCurrRequestObj = storeRequestsMap(
             requestId,
             newCapturedInfo
           );
+          await captureCheckpointPromise;
           if (
             needQueryDetail &&
             formatUrlKey.startsWith(
@@ -2416,16 +3002,26 @@ export const pageDecodeMsgListener = async (
               //   `targeturl:${subDetails.url}, method:${subDetails.method} Request Body: ${bodyText}`
               // );
 
+              const captureCheckpointPromise = recordExternalCaptureActivity(
+                requestidForCapture,
+                'requestBody'
+              );
               storeRequestsMap(requestId, {
                 body: JSON.parse(bodyText),
               });
+              await captureCheckpointPromise;
             }
           }
           if (requestBody && requestBody.formData) {
-            await storeRequestsMap(requestId, {
+            const captureCheckpointPromise = recordExternalCaptureActivity(
+              requestidForCapture,
+              'requestBody'
+            );
+            storeRequestsMap(requestId, {
               body: requestBody.formData,
               isFormData: true,
             });
+            await captureCheckpointPromise;
           }
         }
       };
@@ -2453,6 +3049,10 @@ export const pageDecodeMsgListener = async (
             // real target; ignore bare 401s / unrelated completions.
             return;
           }
+          await recordExternalCaptureActivity(
+            requestidForCapture,
+            'requestCompleted'
+          );
           RequestsHasCompleted = true;
           console.log('onCompletedFn', dataSource, details);
           const interceptorRequests = requests.filter((r) => r.name !== 'first');
@@ -2922,6 +3522,17 @@ export const pageDecodeMsgListener = async (
 
       chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
         if (tabId === dataSourcePageTabId) {
+          const removedRequestid = activeTemplate?.requestid;
+          if (removedRequestid) {
+            await transitionPageDecodeSessionState({
+              requestid: removedRequestid,
+              phase: PAGE_DECODE_PHASE.TERMINAL,
+              terminalResult: {
+                result: 'cancel',
+                requestid: removedRequestid,
+              },
+            });
+          }
           chrome.runtime.sendMessage({
             type: 'pageDecode',
             // name: 'abortAttest',
@@ -2947,16 +3558,9 @@ export const pageDecodeMsgListener = async (
       await hydrateBinanceCachedRequestsFn();
       await checkWebRequestIsReadyFn();
     }
-    if (name === 'getWebRequestReadyStatus') {
-      sendResponse({
-        isReady: isReadyRequest,
-        terminalResult,
-      });
-      return;
-    }
     if (name === 'initCompleted') {
       console.log('content_scripts-bg-decode receive:initCompleted');
-      sendResponse({
+      const response = {
         name: 'append',
         params: {
           ...activeTemplate,
@@ -2968,10 +3572,18 @@ export const pageDecodeMsgListener = async (
         dataSourcePageTabId: dataSourcePageTabId,
         isReady: isReadyRequest,
         operation: operationType,
-      });
+      };
       checkWebRequestIsReadyFn();
+      return response;
     }
     if (name === 'start') {
+      if (
+        params?.requestid &&
+        activeTemplate?.requestid &&
+        params.requestid !== activeTemplate.requestid
+      ) {
+        return;
+      }
       await startPageDecodeAttestationFn();
       // if (!activeTemplate.sdkVersion) {
       //   const { constructorF } = DATASOURCEMAP[dataSource];
@@ -2988,45 +3600,139 @@ export const pageDecodeMsgListener = async (
     }
 
     if (name === 'close' || name === 'cancel') {
-      chandleClose(params, processAlgorithmReq);
+      return chandleClose(params, processAlgorithmReq);
     }
     if (name === 'end') {
-      handleEnd(request);
+      return handleEnd(request);
     }
     if (name === 'interceptionFail') {
-      handle00013();
+      return handleInterceptionFailAfterFinalReadiness(params?.requestid);
     }
     if (name === 'dataSourcePageDialogTimeout') {
-      handleDataSourcePageDialogTimeout(processAlgorithmReq);
+      return handleDataSourcePageDialogTimeout(
+        processAlgorithmReq,
+        params?.requestid
+      );
     }
   } else {
     if (name === 'close' || name === 'cancel') {
-      chandleClose(params, processAlgorithmReq);
+      return chandleClose(params, processAlgorithmReq);
     }
     if (name === 'interceptionFail') {
-      handle00013();
+      const result = await handle00013(params?.requestid);
+      if (result?.captureInterrupted) {
+        return handleDataSourcePageDialogTimeout(
+          processAlgorithmReq,
+          params?.requestid
+        );
+      }
+      return result;
     }
     if (name === 'dataSourcePageDialogTimeout') {
-      handleDataSourcePageDialogTimeout(processAlgorithmReq);
+      return handleDataSourcePageDialogTimeout(
+        processAlgorithmReq,
+        params?.requestid
+      );
     }
     if (name === 'end') {
-      handleEnd(request);
+      return handleEnd(request);
     }
   }
 };
 
-const handleEnd = (request) => {
-  terminalResult = request?.params ? { ...request.params } : null;
+const handleEnd = async (request) => {
+  let requestid = request?.params?.requestid;
+  if (!requestid) {
+    const state = await getAuthoritativePageDecodeState();
+    if (state.requestid) {
+      return state.terminalResult;
+    }
+    requestid = activeTemplate?.requestid;
+  }
+  if (!requestid) {
+    const state = await getAuthoritativePageDecodeState();
+    requestid = state.requestid;
+  }
+  if (request?.params?.requestid) {
+    const state = await getAuthoritativePageDecodeState(requestid);
+    if (!state.isCurrentRequest) {
+      return state.terminalResult;
+    }
+  }
+  const requestedTerminalResult = request?.params
+    ? { ...request.params, requestid }
+    : null;
+  let persistedTerminalResult = requestedTerminalResult;
+  if (requestid && requestedTerminalResult) {
+    let transition = await transitionPageDecodeSessionState({
+      requestid,
+      phase: PAGE_DECODE_PHASE.TERMINAL,
+      terminalResult: requestedTerminalResult,
+    });
+    if (!transition.applied && !transition.session) {
+      transition = await transitionPageDecodeSessionState({
+        requestid,
+        phase: PAGE_DECODE_PHASE.TERMINAL,
+        terminalResult: requestedTerminalResult,
+        replace: true,
+      });
+    }
+    persistedTerminalResult =
+      transition.session?.terminalResult || requestedTerminalResult;
+  }
+  terminalResult = persistedTerminalResult;
   if (dataSourcePageTabId) {
-    sendMsgToDataSourcePage(request);
+    await sendMsgToDataSourcePage({
+      ...request,
+      params: persistedTerminalResult,
+    });
     chrome.webRequest.onBeforeSendHeaders.removeListener(onBeforeSendHeadersFn);
     chrome.webRequest.onBeforeRequest.removeListener(onBeforeRequestFn);
     chrome.webRequest.onCompleted.removeListener(onCompletedFn);
     resetVarsFn();
   }
+  return persistedTerminalResult;
 };
 const chandleClose = async (params, processAlgorithmReq) => {
-  terminalResult = null;
+  if (!params?.requestid) {
+    const state = await getAuthoritativePageDecodeState();
+    if (state.requestid) {
+      return { accepted: false, ...state };
+    }
+  }
+  if (params?.requestid) {
+    const state = await getAuthoritativePageDecodeState(params.requestid);
+    if (!state.isCurrentRequest) {
+      return { accepted: false, ...state };
+    }
+  }
+  const closeRequestid =
+    params?.requestid ||
+    activeTemplate?.requestid ||
+    (await getAuthoritativePageDecodeState()).requestid;
+  if (closeRequestid) {
+    const closeTerminalResult = {
+      result: 'cancel',
+      requestid: closeRequestid,
+    };
+    let transition = await transitionPageDecodeSessionState({
+      requestid: closeRequestid,
+      phase: PAGE_DECODE_PHASE.TERMINAL,
+      terminalResult: closeTerminalResult,
+    });
+    if (!transition.applied && !transition.session) {
+      transition = await transitionPageDecodeSessionState({
+        requestid: closeRequestid,
+        phase: PAGE_DECODE_PHASE.TERMINAL,
+        terminalResult: closeTerminalResult,
+        replace: true,
+      });
+    }
+    terminalResult =
+      transition.session?.terminalResult || closeTerminalResult;
+  } else {
+    terminalResult = null;
+  }
   console.log('pageDecode-close');
   const deleteTabId = params?.tabId || dataSourcePageTabId;
   console.log('pageDecode-close-tabId', params?.tabId, dataSourcePageTabId);
@@ -3034,7 +3740,7 @@ const chandleClose = async (params, processAlgorithmReq) => {
     try {
       await chrome.tabs.remove(deleteTabId);
     } catch (e) {
-      console.log('chrome.tabs.remove error:', error);
+      console.log('chrome.tabs.remove error:', e);
     }
   }
   console.log('pageDecode-close-currExtentionId', currExtentionId);
@@ -3050,5 +3756,5 @@ const chandleClose = async (params, processAlgorithmReq) => {
 
   resetVarsFn();
   handlerForSdk(processAlgorithmReq, 'cancel');
-  await clearAttestationReportContext();
+  await clearAttestationReportContext(closeRequestid);
 };

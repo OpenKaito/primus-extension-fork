@@ -31,6 +31,11 @@ export const initAttestationReportContext = ({
   templateId,
   attConditions,
   targetCount = 0,
+  source,
+  schemaType,
+  sigFormat,
+  event,
+  attestOrigin,
 }) =>
   enqueueContextOperation(async () => {
     const stepProgress = defaultStepProgress();
@@ -44,6 +49,11 @@ export const initAttestationReportContext = ({
         kaitoRequestId,
         templateId,
         attConditions,
+        source,
+        schemaType,
+        sigFormat,
+        event,
+        attestOrigin,
         steps: [],
         stepProgress,
         getAttestationResCount: 0,
@@ -98,8 +108,8 @@ export const updateAttestationStepProgress = (
           ? 'skipped'
           : 'success'
         : completed > 0 || skipped > 0
-          ? 'partial'
-          : 'pending';
+        ? 'partial'
+        : 'pending';
     const stepProgress = {
       ...defaultStepProgress(),
       ...context.stepProgress,
@@ -188,8 +198,7 @@ export const enrichAttestationReportRawData = async (eventType, rawData) => {
       getAttestationRes: context.getAttestationRes ?? null,
       getAttestationResultRes: context.getAttestationResultRes ?? null,
       getAttestationResCount: context.getAttestationResCount || 0,
-      getAttestationResultResCount:
-        context.getAttestationResultResCount || 0,
+      getAttestationResultResCount: context.getAttestationResultResCount || 0,
     };
   }
   return enriched;
