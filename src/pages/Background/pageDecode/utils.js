@@ -5,6 +5,7 @@ const { DOMParser } = require('xmldom');
 const cheerio = require('cheerio');
 
 import { customFetch2 } from '../utils/request';
+import { describeReplayFailure } from './targetCheckDiag.js';
 export const extraRequestFn2 = async (params, onError) => {
   try {
     const { ...requestParams } = params;
@@ -12,10 +13,12 @@ export const extraRequestFn2 = async (params, onError) => {
     if (typeof requestRes === 'object' && requestRes !== null) {
       return requestRes;
     }
-    onError?.(`non-object response: ${typeof requestRes}`);
+    const message = `non-object response: ${typeof requestRes}`;
+    await onError?.(message, describeReplayFailure(message));
   } catch (e) {
     console.log('fetch custom request error', e);
-    onError?.(e?.message || String(e));
+    const message = e?.message || String(e);
+    await onError?.(message, describeReplayFailure(e));
   }
 };
 

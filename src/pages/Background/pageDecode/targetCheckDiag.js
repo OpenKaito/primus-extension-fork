@@ -73,6 +73,29 @@ export function describeTargetCheck(query, jsonPathArr, result, replayError) {
   };
 }
 
+export function describeReplayFailure(error) {
+  const message = error?.message || String(error || '');
+  const parsedStatus = /status:\s*(\d{3})/i.exec(message)?.[1];
+  const httpStatus = Number.isInteger(error?.httpStatus)
+    ? error.httpStatus
+    : parsedStatus
+      ? Number(parsedStatus)
+      : null;
+  if (httpStatus !== null) {
+    return { httpStatus };
+  }
+  if (/non-object response/i.test(message)) {
+    return { reason: 'non_json' };
+  }
+  if (/cors/i.test(message)) {
+    return { reason: 'cors' };
+  }
+  if (error?.name === 'TypeError' || /failed to fetch|network/i.test(message)) {
+    return { reason: 'network' };
+  }
+  return { reason: 'unknown' };
+}
+
 export function mergeTargetCheck(record, templateUrl, check, at = Date.now()) {
   const targets = { ...((record && record.targets) || {}) };
   const prev = targets[templateUrl];

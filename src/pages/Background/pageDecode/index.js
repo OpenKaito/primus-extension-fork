@@ -75,13 +75,16 @@ import {
 } from '../utils/utils';
 import {
   addSDKParamsToReportParamsFn,
+  ATTESTATION_REPORT_CONTEXT_KEY,
   clearAttestationReportContext,
   initAttestationReportContext,
   updateAttestationStepProgress,
+  updateAttestationStepTarget,
 } from '../utils/reportEvent.js';
 import jp from 'jsonpath';
 import {
   TARGET_CHECK_DEBUG_KEY,
+  describeReplayFailure,
   describeTargetCheck,
   mergeTargetCheck,
 } from './targetCheckDiag.js';
@@ -127,6 +130,7 @@ let hasStartedPageDecodeAttestation = false;
 let replayedTargetKeys = new Set();
 let validatedTargetKeys = new Set();
 let skippedReplayTargetKeys = new Set();
+let capturedTargetFailureEvidence = new Map();
 let chatgptAuthorizationHeader = '';
 let chatgptReadyPollTimer = null;
 const CHATGPT_AUTH_HEADER_SESSION_KEY = 'kaitoChatGptAuthorizationHeader';
@@ -245,6 +249,141 @@ const hasAuthorizationHeader = (headers = {}) => {
   return !!getHeaderValue(headers, 'authorization');
 };
 
+const getCapturedTargetFailures = (templateRequests = []) =>
+  templateRequests.flatMap((templateRequest) => {
+    const urlMatches = Object.values(requestsMap).filter((requestInfo) => {
+      if (typeof requestInfo?.url !== 'string') {
+        return false;
+      }
+      return (
+        checkIsRequiredUrl({
+          requestUrl: requestInfo.url,
+          requiredUrl: templateRequest.url,
+          urlType: templateRequest.urlType,
+          queryParams: templateRequest.queryParams,
+        }) ||
+        binanceRequestMatchesTemplate(requestInfo.url, templateRequest)
+      );
+    });
+    const methodMatches = urlMatches.filter(
+      (requestInfo) =>
+        !templateRequest.method ||
+        !requestInfo?.method ||
+        String(templateRequest.method).toUpperCase() ===
+          String(requestInfo.method).toUpperCase()
+    );
+    let reason;
+    if (methodMatches.length === 0) {
+      reason =
+        urlMatches.length > 0
+          ? 'method_mismatch'
+          : capturedTargetFailureEvidence.get(templateRequest.url) ||
+            'not_observed';
+    } else {
+      const requestInfo = methodMatches[0];
+      const storedRequestInfo =
+        requestsMap[requestInfo.requestId] || requestInfo || {};
+      if (templateRequest.headers && !storedRequestInfo.headers) {
+        reason = 'missing_headers';
+      } else if (templateRequest.body && !storedRequestInfo.body) {
+        reason = 'missing_body';
+      } else if (
+        templateRequest.cookies &&
+        (!storedRequestInfo.headers ||
+          (!storedRequestInfo.headers.Cookie &&
+            !storedRequestInfo.headers.cookie))
+      ) {
+        reason = 'missing_cookie';
+      }
+    }
+    return reason
+      ? [
+          {
+            name: templateRequest.name,
+            templateUrl: templateRequest.url,
+            reason,
+          },
+        ]
+      : [];
+  });
+
+const templateRequestHasMarkedTarget = (templateRequest) =>
+  Object.values(requestsMap).some((requestInfo) => {
+    if (requestInfo?.isTarget !== 1) {
+      return false;
+    }
+    if (
+      templateRequest?.method &&
+      requestInfo?.method &&
+      String(templateRequest.method).toUpperCase() !==
+        String(requestInfo.method).toUpperCase()
+    ) {
+      return false;
+    }
+    if (
+      requestInfo.templateRequestUrl === templateRequest.url ||
+      binanceRequestMatchesTemplate(requestInfo.url, templateRequest)
+    ) {
+      return true;
+    }
+    if (typeof requestInfo?.url !== 'string') {
+      return false;
+    }
+    return checkIsRequiredUrl({
+      requestUrl: requestInfo.url,
+      requiredUrl: templateRequest.url,
+      urlType: templateRequest.urlType,
+      queryParams: templateRequest.queryParams,
+    });
+  });
+
+const templateUrlHasLaterStageFailure = (templateUrl, context) =>
+  ['replayed', 'validated'].some((step) =>
+    (context?.stepProgress?.[step]?.targets || []).some(
+      (target) => target.templateUrl === templateUrl
+    )
+  );
+
+const finalizeAttestationTargetsFor00013 = async (requestid) => {
+  const interceptorRequests =
+    activeTemplate?.datasourceTemplate?.requests?.filter(
+      (request) => request.name !== 'first'
+    ) || [];
+  if (!requestid || interceptorRequests.length === 0) {
+    return;
+  }
+  const { [ATTESTATION_REPORT_CONTEXT_KEY]: context } =
+    await chrome.storage.local.get([ATTESTATION_REPORT_CONTEXT_KEY]);
+  if (!context || context.requestid !== requestid) {
+    return;
+  }
+  const targets = [...getCapturedTargetFailures(interceptorRequests)];
+  const capturedUrls = new Set(targets.map((target) => target.templateUrl));
+  for (const templateRequest of interceptorRequests) {
+    if (capturedUrls.has(templateRequest.url)) {
+      continue;
+    }
+    if (templateUrlHasLaterStageFailure(templateRequest.url, context)) {
+      continue;
+    }
+    if (templateRequestHasMarkedTarget(templateRequest)) {
+      continue;
+    }
+    targets.push({
+      name: templateRequest.name,
+      templateUrl: templateRequest.url,
+      reason: 'not_marked_target',
+    });
+    capturedUrls.add(templateRequest.url);
+  }
+  await updateAttestationStepProgress('captured', {
+    completed: context.stepProgress?.captured?.completed ?? 0,
+    total: context.stepProgress?.captured?.total ?? interceptorRequests.length,
+    targets,
+    requestid,
+  });
+};
+
 const resetVarsFn = () => {
   isReadyRequest = false;
   operationType = null;
@@ -260,6 +399,7 @@ const resetVarsFn = () => {
   replayedTargetKeys = new Set();
   validatedTargetKeys = new Set();
   skippedReplayTargetKeys = new Set();
+  capturedTargetFailureEvidence = new Map();
   chatgptAuthorizationHeader = '';
   if (chatgptReadyPollTimer) {
     clearInterval(chatgptReadyPollTimer);
@@ -762,7 +902,8 @@ const handle00013 = async () => {
           rawData.event = parsedActiveRequestAttestation.event;
         }
         rawData = await addSDKParamsToReportParamsFn(rawData);
-        eventReportGenerateFn(rawData);
+        await finalizeAttestationTargetsFor00013(rawData.requestid);
+        await eventReportGenerateFn(rawData);
       }
     }
   } else {
@@ -785,7 +926,8 @@ const handle00013 = async () => {
         if (parsedActiveRequestAttestation.event) {
           rawData.event = parsedActiveRequestAttestation.event;
         }
-        eventReportGenerateFn(rawData);
+        await finalizeAttestationTargetsFor00013(rawData.requestid);
+        await eventReportGenerateFn(rawData);
       }
     }
   }
@@ -969,6 +1111,17 @@ export const pageDecodeMsgListener = async (
       const thisResponseObj = responses[thisRequestUrlIdx];
       const progressKey = `${thisRequestUrlIdx}:${templateRequestUrl}`;
       const targetCount = requests.filter((item) => item.name !== 'first').length;
+      const targetIdentity = {
+        name: thisRequestObj?.name,
+        templateUrl: thisRequestObj?.url,
+      };
+      const updateStepTarget = (step, target) =>
+        updateAttestationStepTarget(
+          step,
+          progressKey,
+          target ? { ...targetIdentity, ...target } : null,
+          activeTemplate?.requestid
+        );
 
       const { url, urlType, queryParams, ignoreResponse } = thisRequestObj;
       const bodyMatchesTemplate = (requestInfo, templateRequest) => {
@@ -998,6 +1151,12 @@ export const pageDecodeMsgListener = async (
 	          bodyMatchesTemplate(v, thisRequestObj)
 	      );
 
+      if (thisRequestUrlFoundFlag) {
+        await Promise.all([
+          updateStepTarget('replayed', null),
+          updateStepTarget('validated', null),
+        ]);
+      }
       if (!thisRequestUrlFoundFlag) {
         if (ignoreResponse) {
           const ignoredTargetFound = Object.values(requestsMap).some((sInfo) => {
@@ -1020,10 +1179,15 @@ export const pageDecodeMsgListener = async (
           });
           if (ignoredTargetFound) {
             skippedReplayTargetKeys.add(progressKey);
+            await Promise.all([
+              updateStepTarget('replayed', null),
+              updateStepTarget('validated', null),
+            ]);
             await updateAttestationStepProgress('replayed', {
               completed: replayedTargetKeys.size,
               skipped: skippedReplayTargetKeys.size,
               total: targetCount,
+              requestid: activeTemplate?.requestid,
             });
           }
         } else {
@@ -1163,20 +1327,34 @@ export const pageDecodeMsgListener = async (
                 // page context.
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
                 skippedReplayTargetKeys.add(progressKey);
+                await Promise.all([
+                  updateStepTarget('replayed', null),
+                  updateStepTarget('validated', null),
+                ]);
                 await updateAttestationStepProgress('replayed', {
                   completed: replayedTargetKeys.size,
                   skipped: skippedReplayTargetKeys.size,
                   total: targetCount,
+                  requestid: activeTemplate?.requestid,
                 });
                 break;
               }
               if (requestsMap[matchRequestId].type === 'main_frame') {
-                matchRequestUrlResult = await extraRequestHtmlFn({
-                  ...requestsMap[matchRequestId],
-                  header: requestsMap[matchRequestId].headers,
-                  url: targetRequestUrl,
-                });
+                try {
+                  matchRequestUrlResult = await extraRequestHtmlFn({
+                    ...requestsMap[matchRequestId],
+                    header: requestsMap[matchRequestId].headers,
+                    url: targetRequestUrl,
+                  });
+                } catch (error) {
+                  replayError = error?.message || String(error);
+                  await updateStepTarget(
+                    'replayed',
+                    describeReplayFailure(error)
+                  );
+                }
                 if (matchRequestUrlResult) {
+                  await updateStepTarget('replayed', null);
                   isTargetUrl = checkResHtmlIsMatchConditionFn(
                     jsonPathArr,
                     matchRequestUrlResult
@@ -1185,14 +1363,17 @@ export const pageDecodeMsgListener = async (
                     storeRequestsMap(matchRequestId, { isTarget: 1 });
                     replayedTargetKeys.add(progressKey);
                     validatedTargetKeys.add(progressKey);
+                    await updateStepTarget('validated', null);
                     await updateAttestationStepProgress('replayed', {
                       completed: replayedTargetKeys.size,
                       skipped: skippedReplayTargetKeys.size,
                       total: targetCount,
+                      requestid: activeTemplate?.requestid,
                     });
                     await updateAttestationStepProgress('validated', {
                       completed: validatedTargetKeys.size,
                       total: targetCount,
+                      requestid: activeTemplate?.requestid,
                     });
                     break;
                   }
@@ -1204,8 +1385,14 @@ export const pageDecodeMsgListener = async (
                     header: requestsMap[matchRequestId].headers,
                     url: targetRequestUrl,
                   },
-                  (message) => {
+                  (message, failure) => {
                     replayError = message;
+                    return updateStepTarget(
+                      'replayed',
+                      failure?.httpStatus
+                        ? { httpStatus: failure.httpStatus }
+                        : { reason: failure?.reason || 'unknown' }
+                    );
                   }
                 );
               }
@@ -1232,10 +1419,12 @@ export const pageDecodeMsgListener = async (
               }
               if (matchRequestUrlResult) {
                 replayedTargetKeys.add(progressKey);
+                await updateStepTarget('replayed', null);
                 await updateAttestationStepProgress('replayed', {
                   completed: replayedTargetKeys.size,
                   skipped: skippedReplayTargetKeys.size,
                   total: targetCount,
+                  requestid: activeTemplate?.requestid,
                 });
               }
               const notMetHandler = async () => {
@@ -1336,26 +1525,34 @@ export const pageDecodeMsgListener = async (
                   );
               }
 
-              await recordTargetCheck(
-                thisRequestObj.url,
-                isTargetUrl
-                  ? { outcome: 'ok' }
-                  : describeTargetCheck(
-                      (value, path) => jp.query(value, path),
-                      jsonPathArr,
-                      matchRequestUrlResult,
-                      replayError
-                    )
-              );
+              const targetCheck = isTargetUrl
+                ? { outcome: 'ok' }
+                : describeTargetCheck(
+                    (value, path) => jp.query(value, path),
+                    jsonPathArr,
+                    matchRequestUrlResult,
+                    replayError
+                  );
+              await recordTargetCheck(thisRequestObj.url, targetCheck);
               if (isTargetUrl) {
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
                 validatedTargetKeys.add(progressKey);
+                await updateStepTarget('validated', null);
                 await updateAttestationStepProgress('validated', {
                   completed: validatedTargetKeys.size,
                   total: targetCount,
+                  requestid: activeTemplate?.requestid,
                 });
                 break;
               } else {
+                if (matchRequestUrlResult) {
+                  await updateStepTarget(
+                    'validated',
+                    targetCheck.missing?.[0]
+                      ? { missingPath: targetCheck.missing[0] }
+                      : { reason: 'condition_not_met' }
+                  );
+                }
                 if (requestsMap[matchRequestId]) {
                   storeRequestsMap(matchRequestId, { isTarget: 2 });
                 }
@@ -1378,6 +1575,8 @@ export const pageDecodeMsgListener = async (
 	        if (dataSource === 'chatgpt') {
 	          await hydrateMissingChatGptRequestsFromTrace(requests);
 	        }
+        const capturedTargetFailures =
+          getCapturedTargetFailures(interceptorRequests);
 	        const writeBinanceReadinessDebug = async (extra = {}) => {
 	          if (
 	            !isBinanceDataSourceName(dataSource) &&
@@ -1489,6 +1688,8 @@ export const pageDecodeMsgListener = async (
           await updateAttestationStepProgress('captured', {
             completed: captureNum,
             total: interceptorRequests.length,
+            targets: capturedTargetFailures,
+            requestid: activeTemplate?.requestid,
           });
 
 	          let fl = false;
@@ -1591,6 +1792,8 @@ export const pageDecodeMsgListener = async (
             await updateAttestationStepProgress('captured', {
               completed: capturedCount,
               total: interceptorRequests.length,
+              targets: capturedTargetFailures,
+              requestid: activeTemplate?.requestid,
             });
 	          await writeBinanceReadinessDebug({
 	            captured: capturedCount,
@@ -2317,7 +2520,16 @@ export const pageDecodeMsgListener = async (
           ) {
             // ChatGPT subscriptions authenticates with a Bearer header; a
             // cookie-only request (bare 401) must not be captured as the target.
+            if (templateRequestUrl) {
+              capturedTargetFailureEvidence.set(
+                templateRequestUrl,
+                'unauthorized'
+              );
+            }
             return;
+          }
+          if (templateRequestUrl) {
+            capturedTargetFailureEvidence.delete(templateRequestUrl);
           }
           console.log('monad-details', details);
           let newCapturedInfo = {
