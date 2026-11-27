@@ -241,6 +241,48 @@ describe('pageDecode authoritative attestation state', () => {
       false,
       'absent startedAt rejects replace to prevent clobber'
     );
+    assert.equal(
+      shouldReplacePageDecodeSession({
+        currentSession: {
+          requestid: 'request-b',
+          phase: PAGE_DECODE_PHASE.ATTESTING,
+          createdAt: 200,
+          updatedAt: 300,
+        },
+        requestid: 'request-b',
+        startedAt: 50,
+      }),
+      false,
+      'same requestid in non-capturing phase rejects duplicate init'
+    );
+  });
+
+  it('does not let a synthesized terminal session block a new init', () => {
+    const synthesized = transitionPageDecodeSession(null, {
+      requestid: 'request-a',
+      phase: PAGE_DECODE_PHASE.TERMINAL,
+      terminalResult: { result: 'warn', requestid: 'request-a' },
+      replace: true,
+      createdAt: 0,
+      now: 2000,
+    }).session;
+    assert.equal(synthesized.createdAt, 0);
+    assert.equal(synthesized.updatedAt, 2000);
+    assert.equal(
+      shouldReplacePageDecodeSession({
+        currentSession: synthesized,
+        requestid: 'request-b',
+        startedAt: 1500,
+      }),
+      true
+    );
+    const initialized = transitionPageDecodeSession(null, {
+      requestid: 'request-c',
+      phase: PAGE_DECODE_PHASE.CAPTURING,
+      replace: true,
+      now: 1000,
+    }).session;
+    assert.equal(initialized.createdAt, 1000);
   });
 
   it('falls back to updatedAt for sessions without createdAt', () => {

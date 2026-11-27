@@ -50,8 +50,14 @@ export const shouldReplacePageDecodeSession = ({
   if (!requestid) {
     return false;
   }
-  if (!currentSession || currentSession.requestid === requestid) {
+  if (!currentSession) {
     return true;
+  }
+  if (currentSession.requestid === requestid) {
+    return (
+      !currentSession.phase ||
+      currentSession.phase === PAGE_DECODE_PHASE.CAPTURING
+    );
   }
   const issuedAt = Number(startedAt);
   if (!Number.isFinite(issuedAt)) {
@@ -153,6 +159,7 @@ export const transitionPageDecodeSession = (
     replace = false,
     allowedFrom,
     now = Date.now(),
+    createdAt,
   }
 ) => {
   const current = parseStoredJson(currentValue);
@@ -167,7 +174,7 @@ export const transitionPageDecodeSession = (
         phase,
         terminalResult:
           phase === PAGE_DECODE_PHASE.TERMINAL ? terminalResult || null : null,
-        createdAt: now,
+        createdAt: createdAt ?? now,
         updatedAt: now,
       },
     };

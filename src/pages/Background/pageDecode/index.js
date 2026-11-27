@@ -350,6 +350,7 @@ const transitionPageDecodeSessionState = ({
   storageEntries = {},
   guard,
   reportEntry,
+  createdAt,
 }) =>
   pageDecodeSessionQueue.run(async () => {
     const {
@@ -372,6 +373,7 @@ const transitionPageDecodeSessionState = ({
       terminalResult: nextTerminalResult,
       replace,
       allowedFrom,
+      createdAt,
     });
     if (!transition.applied) {
       return transition;
@@ -440,6 +442,7 @@ const initializePageDecodeSession = (
       requestid,
       phase: PAGE_DECODE_PHASE.CAPTURING,
       replace: true,
+      now: Number(startedAt) || Date.now(),
     });
     await pageDecodeCaptureCheckpointQueue.run(() =>
       chrome.storage.local.set({
@@ -1049,9 +1052,7 @@ const handle00013 = async (requestid, expectedCaptureRevision) => {
     const { [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: captureCheckpoint } =
       await chrome.storage.local.get([PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]);
     if (
-      hasCompleteCaptureCheckpoint(captureCheckpoint, requestid) &&
-      captureCheckpoint.revision > 0 &&
-      captureCheckpoint.revision === captureActivityRevision
+      hasCompleteCaptureCheckpoint(captureCheckpoint, requestid)
     ) {
       return {
         accepted: false,
@@ -1201,6 +1202,7 @@ const handle00013 = async (requestid, expectedCaptureRevision) => {
         phase: PAGE_DECODE_PHASE.TERMINAL,
         terminalResult: nextTerminalResult,
         replace: true,
+        createdAt: 0,
         guard: captureRevisionGuard,
         reportEntry,
       });
@@ -1415,6 +1417,7 @@ const handleDataSourcePageDialogTimeout = async (
         phase: PAGE_DECODE_PHASE.TERMINAL,
         terminalResult: timeoutTerminalResult,
         replace: true,
+        createdAt: 0,
         reportEntry,
       });
     }
@@ -3798,6 +3801,7 @@ const handleEnd = async (request) => {
         phase: PAGE_DECODE_PHASE.TERMINAL,
         terminalResult: requestedTerminalResult,
         replace: true,
+        createdAt: 0,
       });
     }
     if (
@@ -3882,6 +3886,7 @@ const chandleClose = async (params, processAlgorithmReq) => {
         phase: PAGE_DECODE_PHASE.TERMINAL,
         terminalResult: closeTerminalResult,
         replace: true,
+        createdAt: 0,
       });
     }
     terminalResult =
