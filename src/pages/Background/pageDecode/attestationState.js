@@ -31,6 +31,31 @@ export const hasCompleteCaptureCheckpoint = (checkpoint, requestid) =>
       checkpoint.matchedTargetCount >= checkpoint.targetCount
   );
 
+export const resolveInitCaptureCheckpoint = (
+  existingCheckpoint,
+  requestid,
+  targetCount
+) =>
+  existingCheckpoint?.requestid === requestid
+    ? existingCheckpoint
+    : {
+        requestid,
+        observed: false,
+        lastCaptureAt: null,
+        revision: 0,
+        matchedTargetCount: 0,
+        targetCount,
+      };
+
+export const mergeCapturedTargetCount = (
+  existingCheckpoint,
+  requestid,
+  capturedCount
+) =>
+  existingCheckpoint?.requestid === requestid
+    ? Math.max(Number(existingCheckpoint.matchedTargetCount) || 0, capturedCount)
+    : capturedCount;
+
 export const pageDecodeSessionBelongsToRequest = ({
   requestid,
   sessionRequestid,

@@ -42,6 +42,23 @@ export const initAttestationReportContext = ({
     Object.values(stepProgress).forEach((step) => {
       step.total = targetCount;
     });
+    const stored = await chrome.storage.local.get([
+      ATTESTATION_REPORT_CONTEXT_KEY,
+    ]);
+    const existing = stored[ATTESTATION_REPORT_CONTEXT_KEY];
+    // A same-request re-init only happens after the worker restarted with the
+    // session still capturing; its in-memory progress is gone, so keep the
+    // persisted progress and use it as a floor for later writes.
+    const resumedProgress =
+      Boolean(requestid) &&
+      existing?.requestid === requestid &&
+      existing.stepProgress
+        ? {
+            steps: existing.steps || [],
+            stepProgress: existing.stepProgress,
+            stepProgressFloor: existing.stepProgress,
+          }
+        : {};
     await chrome.storage.local.set({
       [ATTESTATION_REPORT_CONTEXT_KEY]: {
         address,
@@ -58,6 +75,7 @@ export const initAttestationReportContext = ({
         stepProgress,
         getAttestationResCount: 0,
         getAttestationResultResCount: 0,
+        ...resumedProgress,
       },
     });
   });
@@ -96,10 +114,18 @@ const updateAttestationReportContext = (update, expectedRequestid) =>
 
 export const updateAttestationStepProgress = (
   step,
-  { completed, total, skipped = 0 }
+  { completed, total, skipped = 0 },
+  requestid
 ) =>
   updateAttestationReportContext((context) => {
     const current = context.stepProgress?.[step] || {};
+    const floor = context.stepProgressFloor?.[step];
+    const floorCompleted = Number(floor?.completed) || 0;
+    const floorSkipped = Number(floor?.skipped) || 0;
+    if (completed + skipped < floorCompleted + floorSkipped) {
+      completed = floorCompleted;
+      skipped = floorSkipped;
+    }
     const nextTotal = total ?? current.total ?? 0;
     const finished = completed + skipped;
     const status =
@@ -126,7 +152,7 @@ export const updateAttestationStepProgress = (
       (name) => stepProgress[name]?.status === 'success'
     );
     return { ...context, steps, stepProgress };
-  });
+  }, requestid || undefined);
 
 export const recordAttestationAlgorithmResponse = (
   resMethodName,

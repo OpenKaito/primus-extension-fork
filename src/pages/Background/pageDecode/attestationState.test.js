@@ -9,6 +9,8 @@ import {
   algorithmResultAlreadyReported,
   checkpointWriteBelongsToSession,
   isDuplicatePageDecodeInit,
+  mergeCapturedTargetCount,
+  resolveInitCaptureCheckpoint,
   shouldRecoverUnreported00013,
   shouldReplacePageDecodeSession,
   resolvePageDecodeAttestationState,
@@ -255,6 +257,38 @@ describe('pageDecode authoritative attestation state', () => {
       }),
       false,
       'same requestid in non-capturing phase rejects duplicate init'
+    );
+  });
+
+  it('keeps a same-request capture checkpoint across a respawn re-init', () => {
+    const completed = {
+      requestid: 'request-a',
+      observed: true,
+      revision: 5,
+      matchedTargetCount: 2,
+      targetCount: 2,
+    };
+    const afterReinit = resolveInitCaptureCheckpoint(completed, 'request-a', 2);
+    assert.deepEqual(afterReinit, completed);
+    assert.equal(hasCompleteCaptureCheckpoint(afterReinit, 'request-a'), true);
+
+    assert.equal(
+      mergeCapturedTargetCount(afterReinit, 'request-a', 1),
+      2,
+      'a recapture after respawn must not lower the persisted count'
+    );
+    assert.equal(mergeCapturedTargetCount(afterReinit, 'request-a', 2), 2);
+
+    const fresh = resolveInitCaptureCheckpoint(completed, 'request-b', 3);
+    assert.equal(fresh.requestid, 'request-b');
+    assert.equal(fresh.observed, false);
+    assert.equal(fresh.matchedTargetCount, 0);
+    assert.equal(fresh.targetCount, 3);
+    assert.equal(mergeCapturedTargetCount(fresh, 'request-b', 1), 1);
+    assert.equal(mergeCapturedTargetCount(completed, 'request-b', 1), 1);
+    assert.equal(
+      resolveInitCaptureCheckpoint(undefined, 'request-a', 2).matchedTargetCount,
+      0
     );
   });
 

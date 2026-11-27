@@ -96,7 +96,9 @@ import {
   checkpointWriteBelongsToSession,
   hasCompleteCaptureCheckpoint,
   isDuplicatePageDecodeInit,
+  mergeCapturedTargetCount,
   pageDecodeSessionBelongsToRequest,
+  resolveInitCaptureCheckpoint,
   resolvePageDecodeAttestationState,
   shouldRecoverUnreported00013,
   shouldReplacePageDecodeSession,
@@ -228,8 +230,13 @@ const recordExternalCaptureActivity = (requestid, stage, targetKey) => {
     return Promise.resolve(false);
   }
   return pageDecodeCaptureCheckpointQueue.run(async () => {
-    const { [PAGE_DECODE_SESSION_KEY]: currentSession } =
-      await chrome.storage.local.get([PAGE_DECODE_SESSION_KEY]);
+    const {
+      [PAGE_DECODE_SESSION_KEY]: currentSession,
+      [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: currentCheckpoint,
+    } = await chrome.storage.local.get([
+      PAGE_DECODE_SESSION_KEY,
+      PAGE_DECODE_CAPTURE_CHECKPOINT_KEY,
+    ]);
     if (
       activeTemplate?.requestid !== requestid ||
       !checkpointWriteBelongsToSession(currentSession, requestid)
@@ -250,7 +257,11 @@ const recordExternalCaptureActivity = (requestid, stage, targetKey) => {
       lastCaptureAt: Date.now(),
       revision: captureActivityRevision,
       stage,
-      matchedTargetCount: externalCapturedTargetKeys.size,
+      matchedTargetCount: mergeCapturedTargetCount(
+        currentCheckpoint,
+        requestid,
+        externalCapturedTargetKeys.size
+      ),
       targetCount,
     };
     await chrome.storage.local.set({
@@ -455,24 +466,22 @@ const initializePageDecodeSession = (
       replace: true,
       now: Number(startedAt) || Date.now(),
     });
-    await pageDecodeCaptureCheckpointQueue.run(() =>
-      chrome.storage.local.set({
+    await pageDecodeCaptureCheckpointQueue.run(async () => {
+      const { [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: existingCheckpoint } =
+        await chrome.storage.local.get([PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]);
+      await chrome.storage.local.set({
         [PAGE_DECODE_SESSION_KEY]: transition.session,
-        [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: {
+        [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: resolveInitCaptureCheckpoint(
+          existingCheckpoint,
           requestid,
-          observed: false,
-          lastCaptureAt: null,
-          revision: 0,
-          matchedTargetCount: 0,
-          targetCount:
-            targetCount ??
+          targetCount ??
             activeTemplate?.datasourceTemplate?.requests?.filter(
               (request) => request.name !== 'first'
             ).length ??
-            0,
-        },
-      })
-    );
+            0
+        ),
+      });
+    });
     acceptedInitRequestid = requestid;
     return transition;
   });
@@ -1636,11 +1645,15 @@ export const pageDecodeMsgListener = async (
           });
           if (ignoredTargetFound) {
             skippedReplayTargetKeys.add(progressKey);
-            await updateAttestationStepProgress('replayed', {
-              completed: replayedTargetKeys.size,
-              skipped: skippedReplayTargetKeys.size,
-              total: targetCount,
-            });
+            await updateAttestationStepProgress(
+              'replayed',
+              {
+                completed: replayedTargetKeys.size,
+                skipped: skippedReplayTargetKeys.size,
+                total: targetCount,
+              },
+              requestidForCapture
+            );
           }
         } else {
           const matchRequestIdArr = Object.keys(requestsMap).filter((key) => {
@@ -1779,11 +1792,15 @@ export const pageDecodeMsgListener = async (
                 // page context.
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
                 skippedReplayTargetKeys.add(progressKey);
-                await updateAttestationStepProgress('replayed', {
-                  completed: replayedTargetKeys.size,
-                  skipped: skippedReplayTargetKeys.size,
-                  total: targetCount,
-                });
+                await updateAttestationStepProgress(
+                  'replayed',
+                  {
+                    completed: replayedTargetKeys.size,
+                    skipped: skippedReplayTargetKeys.size,
+                    total: targetCount,
+                  },
+                  requestidForCapture
+                );
                 break;
               }
               if (requestsMap[matchRequestId].type === 'main_frame') {
@@ -1801,15 +1818,23 @@ export const pageDecodeMsgListener = async (
                     storeRequestsMap(matchRequestId, { isTarget: 1 });
                     replayedTargetKeys.add(progressKey);
                     validatedTargetKeys.add(progressKey);
-                    await updateAttestationStepProgress('replayed', {
-                      completed: replayedTargetKeys.size,
-                      skipped: skippedReplayTargetKeys.size,
-                      total: targetCount,
-                    });
-                    await updateAttestationStepProgress('validated', {
-                      completed: validatedTargetKeys.size,
-                      total: targetCount,
-                    });
+                    await updateAttestationStepProgress(
+                      'replayed',
+                      {
+                        completed: replayedTargetKeys.size,
+                        skipped: skippedReplayTargetKeys.size,
+                        total: targetCount,
+                      },
+                      requestidForCapture
+                    );
+                    await updateAttestationStepProgress(
+                      'validated',
+                      {
+                        completed: validatedTargetKeys.size,
+                        total: targetCount,
+                      },
+                      requestidForCapture
+                    );
                     break;
                   }
                 }
@@ -1848,11 +1873,15 @@ export const pageDecodeMsgListener = async (
               }
               if (matchRequestUrlResult) {
                 replayedTargetKeys.add(progressKey);
-                await updateAttestationStepProgress('replayed', {
-                  completed: replayedTargetKeys.size,
-                  skipped: skippedReplayTargetKeys.size,
-                  total: targetCount,
-                });
+                await updateAttestationStepProgress(
+                  'replayed',
+                  {
+                    completed: replayedTargetKeys.size,
+                    skipped: skippedReplayTargetKeys.size,
+                    total: targetCount,
+                  },
+                  requestidForCapture
+                );
               }
               const notMetHandler = async () => {
                 const notMetCode = '00104';
@@ -1967,10 +1996,14 @@ export const pageDecodeMsgListener = async (
               if (isTargetUrl) {
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
                 validatedTargetKeys.add(progressKey);
-                await updateAttestationStepProgress('validated', {
-                  completed: validatedTargetKeys.size,
-                  total: targetCount,
-                });
+                await updateAttestationStepProgress(
+                  'validated',
+                  {
+                    completed: validatedTargetKeys.size,
+                    total: targetCount,
+                  },
+                  requestidForCapture
+                );
                 break;
               } else {
                 if (requestsMap[matchRequestId]) {
@@ -2107,10 +2140,14 @@ export const pageDecodeMsgListener = async (
             }
           });
           f = captureNum === interceptorRequests.length;
-          await updateAttestationStepProgress('captured', {
-            completed: captureNum,
-            total: interceptorRequests.length,
-          });
+          await updateAttestationStepProgress(
+            'captured',
+            {
+              completed: captureNum,
+              total: interceptorRequests.length,
+            },
+            requestidAtCheck
+          );
 
 	          let fl = false;
 	          let allRequestUrlFoundFlag = false;
@@ -2212,10 +2249,14 @@ export const pageDecodeMsgListener = async (
                 );
               })
             ).length;
-            await updateAttestationStepProgress('captured', {
-              completed: capturedCount,
-              total: interceptorRequests.length,
-            });
+            await updateAttestationStepProgress(
+              'captured',
+              {
+                completed: capturedCount,
+                total: interceptorRequests.length,
+              },
+              requestidAtCheck
+            );
 	          await writeBinanceReadinessDebug({
 	            captured: capturedCount,
 	            basicReady: false,
