@@ -92,9 +92,13 @@ import {
   PAGE_DECODE_SESSION_KEY,
   createSerialQueue,
   createSingleFlight,
+  algorithmResultAlreadyReported,
+  checkpointWriteBelongsToSession,
   hasCompleteCaptureCheckpoint,
   pageDecodeSessionBelongsToRequest,
   resolvePageDecodeAttestationState,
+  shouldRecoverUnreported00013,
+  shouldReplacePageDecodeSession,
   transitionPageDecodeSession,
 } from './attestationState.js';
 import {
@@ -218,37 +222,41 @@ const storeRequestsMap = (url, urlInfo) => {
 
   return requestsMap[url];
 };
-const recordExternalCaptureActivity = async (
-  requestid,
-  stage,
-  targetKey
-) => {
+const recordExternalCaptureActivity = (requestid, stage, targetKey) => {
   if (!requestid || activeTemplate?.requestid !== requestid) {
-    return false;
+    return Promise.resolve(false);
   }
-  if (targetKey) {
-    externalCapturedTargetKeys.add(String(targetKey));
-  }
-  captureActivityRevision += 1;
-  const targetCount =
-    activeTemplate?.datasourceTemplate?.requests?.filter(
-      (request) => request.name !== 'first'
-    ).length || 0;
-  const checkpoint = {
-    requestid,
-    observed: true,
-    lastCaptureAt: Date.now(),
-    revision: captureActivityRevision,
-    stage,
-    matchedTargetCount: externalCapturedTargetKeys.size,
-    targetCount,
-  };
-  await pageDecodeCaptureCheckpointQueue.run(() =>
-    chrome.storage.local.set({
+  return pageDecodeCaptureCheckpointQueue.run(async () => {
+    const { [PAGE_DECODE_SESSION_KEY]: currentSession } =
+      await chrome.storage.local.get([PAGE_DECODE_SESSION_KEY]);
+    if (
+      activeTemplate?.requestid !== requestid ||
+      !checkpointWriteBelongsToSession(currentSession, requestid)
+    ) {
+      return false;
+    }
+    if (targetKey) {
+      externalCapturedTargetKeys.add(String(targetKey));
+    }
+    captureActivityRevision += 1;
+    const targetCount =
+      activeTemplate?.datasourceTemplate?.requests?.filter(
+        (request) => request.name !== 'first'
+      ).length || 0;
+    const checkpoint = {
+      requestid,
+      observed: true,
+      lastCaptureAt: Date.now(),
+      revision: captureActivityRevision,
+      stage,
+      matchedTargetCount: externalCapturedTargetKeys.size,
+      targetCount,
+    };
+    await chrome.storage.local.set({
       [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: checkpoint,
-    })
-  );
-  return true;
+    });
+    return true;
+  });
 };
 const redactRequestsMapForKaitoDebug = () =>
   Object.fromEntries(
@@ -299,6 +307,15 @@ const hasAuthorizationHeader = (headers = {}) => {
   return !!getHeaderValue(headers, 'authorization');
 };
 
+const detachPageDecodeWebRequestListeners = () => {
+  if (!chrome.webRequest) {
+    return;
+  }
+  chrome.webRequest.onBeforeSendHeaders.removeListener(onBeforeSendHeadersFn);
+  chrome.webRequest.onBeforeRequest.removeListener(onBeforeRequestFn);
+  chrome.webRequest.onCompleted.removeListener(onCompletedFn);
+};
+
 const resetVarsFn = () => {
   isReadyRequest = false;
   operationType = null;
@@ -322,6 +339,7 @@ const resetVarsFn = () => {
     chatgptReadyPollTimer = null;
   }
   chrome.runtime.onMessage.removeListener(listenerFn);
+  detachPageDecodeWebRequestListeners();
 };
 
 const transitionPageDecodeSessionState = ({
@@ -332,10 +350,16 @@ const transitionPageDecodeSessionState = ({
   allowedFrom,
   storageEntries = {},
   guard,
+  reportEntry,
 }) =>
   pageDecodeSessionQueue.run(async () => {
-    const { [PAGE_DECODE_SESSION_KEY]: currentSession } =
-      await chrome.storage.local.get([PAGE_DECODE_SESSION_KEY]);
+    const {
+      [PAGE_DECODE_SESSION_KEY]: currentSession,
+      [PAGE_DECODE_REPORT_OUTBOX_KEY]: currentOutbox = {},
+    } = await chrome.storage.local.get([
+      PAGE_DECODE_SESSION_KEY,
+      PAGE_DECODE_REPORT_OUTBOX_KEY,
+    ]);
     if (guard && !guard()) {
       return {
         applied: false,
@@ -353,21 +377,53 @@ const transitionPageDecodeSessionState = ({
     if (!transition.applied) {
       return transition;
     }
-    await chrome.storage.local.set({
+    const nextEntries = {
       [PAGE_DECODE_SESSION_KEY]: transition.session,
       ...storageEntries,
-    });
+    };
+    if (reportEntry?.reportEventId) {
+      const nextOutbox = {
+        ...currentOutbox,
+        [reportEntry.reportEventId]: reportEntry,
+      };
+      nextEntries[PAGE_DECODE_REPORT_OUTBOX_KEY] = Object.fromEntries(
+        Object.entries(nextOutbox)
+          .sort(
+            ([, left], [, right]) =>
+              (right.createdAt || 0) - (left.createdAt || 0)
+          )
+          .slice(0, 50)
+      );
+    }
+    await chrome.storage.local.set(nextEntries);
     return transition;
   });
 
-const initializePageDecodeSession = (requestid) =>
+const initializePageDecodeSession = (
+  requestid,
+  { startedAt, targetCount } = {}
+) =>
   pageDecodeSessionQueue.run(async () => {
     if (!requestid) {
       return { applied: false, session: null };
     }
-    const { activeRequestAttestation } = await chrome.storage.local.get([
+    const {
+      activeRequestAttestation,
+      [PAGE_DECODE_SESSION_KEY]: currentSession,
+    } = await chrome.storage.local.get([
       'activeRequestAttestation',
+      PAGE_DECODE_SESSION_KEY,
     ]);
+    if (
+      !shouldReplacePageDecodeSession({
+        currentSession,
+        requestid,
+        startedAt,
+      })
+    ) {
+      return { applied: false, stale: true, session: currentSession };
+    }
+    detachPageDecodeWebRequestListeners();
     let storedRequestid;
     try {
       storedRequestid = JSON.parse(activeRequestAttestation || '{}').requestid;
@@ -396,9 +452,11 @@ const initializePageDecodeSession = (requestid) =>
           revision: 0,
           matchedTargetCount: 0,
           targetCount:
+            targetCount ??
             activeTemplate?.datasourceTemplate?.requests?.filter(
               (request) => request.name !== 'first'
-            ).length || 0,
+            ).length ??
+            0,
         },
       })
     );
@@ -920,7 +978,7 @@ const retryPendingPageDecodeReports = async () => {
   }
 };
 
-const eventReportGenerateFn = async (rawData) => {
+const buildPageDecodeReportEntry = async (rawData) => {
   const eventType = 'ATTESTATION_GENERATE';
   let enrichedRawData = rawData;
   try {
@@ -931,7 +989,7 @@ const eventReportGenerateFn = async (rawData) => {
   const reportEventId = `${rawData.requestid}:${eventType}:${
     rawData.detail?.code || 'unknown'
   }`;
-  return deliverPageDecodeReport({
+  return {
     reportEventId,
     eventType,
     rawData: {
@@ -939,8 +997,11 @@ const eventReportGenerateFn = async (rawData) => {
       reportEventId,
     },
     createdAt: Date.now(),
-  });
+  };
 };
+
+const eventReportGenerateFn = async (rawData) =>
+  deliverPageDecodeReport(await buildPageDecodeReportEntry(rawData));
 retryPendingPageDecodeReports().catch((error) => {
   console.log('initial pageDecode report retry failed', error);
 });
@@ -966,14 +1027,32 @@ const handle00013 = async (requestid, expectedCaptureRevision) => {
   if (!requestid && authoritativeState.requestid) {
     return { accepted: false, ...authoritativeState };
   }
+  const unreported00013EventId = `${requestid}:ATTESTATION_GENERATE:00013`;
+  let recoverUnreported00013 = false;
   if (shouldIgnoreInterceptionFail(authoritativeState)) {
-    console.log('ignore interceptionFail because attestation is already active');
-    return { accepted: false, ...authoritativeState };
+    const { [PAGE_DECODE_REPORT_OUTBOX_KEY]: outbox = {} } =
+      await chrome.storage.local.get([PAGE_DECODE_REPORT_OUTBOX_KEY]);
+    recoverUnreported00013 = shouldRecoverUnreported00013({
+      requestid,
+      terminalResult: authoritativeState.terminalResult,
+      outboxHasReport: Boolean(outbox[unreported00013EventId]),
+    });
+    if (!recoverUnreported00013) {
+      console.log('ignore interceptionFail because attestation is already active');
+      return { accepted: false, ...authoritativeState };
+    }
   }
-  if (!activeTemplate?.requestid && requestid) {
+  if (
+    !recoverUnreported00013 &&
+    !activeTemplate?.requestid &&
+    requestid
+  ) {
     const { [PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]: captureCheckpoint } =
       await chrome.storage.local.get([PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]);
-    if (hasCompleteCaptureCheckpoint(captureCheckpoint, requestid)) {
+    if (
+      hasCompleteCaptureCheckpoint(captureCheckpoint, requestid) &&
+      Object.keys(requestsMap).length > 0
+    ) {
       return {
         accepted: false,
         captureInterrupted: true,
@@ -990,41 +1069,6 @@ const handle00013 = async (requestid, expectedCaptureRevision) => {
     failReason: errorObj,
     requestid: requestid || activeTemplate?.requestid,
   };
-  if (requestid) {
-    const captureRevisionGuard =
-      expectedCaptureRevision === undefined
-        ? undefined
-        : () => captureActivityRevision === expectedCaptureRevision;
-    let failureTransition = await transitionPageDecodeSessionState({
-      requestid,
-      phase: PAGE_DECODE_PHASE.TERMINAL,
-      terminalResult: nextTerminalResult,
-      allowedFrom: [PAGE_DECODE_PHASE.CAPTURING],
-      guard: captureRevisionGuard,
-    });
-    if (!failureTransition.applied && !failureTransition.session) {
-      failureTransition = await transitionPageDecodeSessionState({
-        requestid,
-        phase: PAGE_DECODE_PHASE.TERMINAL,
-        terminalResult: nextTerminalResult,
-        replace: true,
-        guard: captureRevisionGuard,
-      });
-    }
-    if (failureTransition.guardRejected) {
-      authoritativeState = await getAuthoritativePageDecodeState(requestid);
-      return {
-        accepted: false,
-        retryReadiness: true,
-        ...authoritativeState,
-      };
-    }
-    if (!failureTransition.applied) {
-      authoritativeState = await getAuthoritativePageDecodeState(requestid);
-      return { accepted: false, ...authoritativeState };
-    }
-  }
-  terminalResult = nextTerminalResult;
 
   let rawData = {};
   let baseRawData = {
@@ -1134,14 +1178,55 @@ const handle00013 = async (requestid, expectedCaptureRevision) => {
     };
     rawData = await addSDKParamsToReportParamsFn(rawData);
   }
+  const reportEntry =
+    Object.keys(rawData).length > 0
+      ? await buildPageDecodeReportEntry(rawData)
+      : null;
+  if (requestid && !recoverUnreported00013) {
+    const captureRevisionGuard =
+      expectedCaptureRevision === undefined
+        ? undefined
+        : () => captureActivityRevision === expectedCaptureRevision;
+    let failureTransition = await transitionPageDecodeSessionState({
+      requestid,
+      phase: PAGE_DECODE_PHASE.TERMINAL,
+      terminalResult: nextTerminalResult,
+      allowedFrom: [PAGE_DECODE_PHASE.CAPTURING],
+      guard: captureRevisionGuard,
+      reportEntry,
+    });
+    if (!failureTransition.applied && !failureTransition.session) {
+      failureTransition = await transitionPageDecodeSessionState({
+        requestid,
+        phase: PAGE_DECODE_PHASE.TERMINAL,
+        terminalResult: nextTerminalResult,
+        replace: true,
+        guard: captureRevisionGuard,
+        reportEntry,
+      });
+    }
+    if (failureTransition.guardRejected) {
+      authoritativeState = await getAuthoritativePageDecodeState(requestid);
+      return {
+        accepted: false,
+        retryReadiness: true,
+        ...authoritativeState,
+      };
+    }
+    if (!failureTransition.applied) {
+      authoritativeState = await getAuthoritativePageDecodeState(requestid);
+      return { accepted: false, ...authoritativeState };
+    }
+  }
+  terminalResult = nextTerminalResult;
   const completionTasks = [];
-  if (Object.keys(rawData).length > 0) {
+  if (reportEntry) {
     if (rawData.requestid) {
       reportRequestIds.push(rawData.requestid);
     }
     completionTasks.push({
       name: 'event report',
-      promise: eventReportGenerateFn(rawData),
+      promise: deliverPageDecodeReport(reportEntry, recoverUnreported00013),
     });
   }
   completionTasks.push({
@@ -1252,7 +1337,7 @@ const handleDataSourcePageDialogTimeout = async (
       rawData.getAttestationResultRes = boundAlgorithmResult;
     }
 
-    if (!boundAlgorithmResult) {
+    if (!algorithmResultAlreadyReported(boundAlgorithmResult)) {
       var eventInfo = {
         eventType: 'ATTESTATION_GENERATE',
         rawData,
@@ -1402,6 +1487,19 @@ export const pageDecodeMsgListener = async (
     retryPendingPageDecodeReports().catch((error) => {
       console.log('pageDecode init report retry failed', error);
     });
+    const initTargetCount =
+      params?.datasourceTemplate?.requests?.filter(
+        (item) => item.name !== 'first'
+      ).length || 0;
+    if (params?.requestid) {
+      const initResult = await initializePageDecodeSession(params.requestid, {
+        startedAt: params?.kaitoStartedAt,
+        targetCount: initTargetCount,
+      });
+      if (initResult?.stale) {
+        return { accepted: false, staleInit: true };
+      }
+    }
     terminalResult = null;
     activeTemplate = {};
     activeTemplate = {
@@ -1409,7 +1507,9 @@ export const pageDecodeMsgListener = async (
       dataSource: params?.dataSource || params?.dataSourceId,
     };
     resetVarsFn();
-    await initializePageDecodeSession(params?.requestid);
+    if (!params?.requestid) {
+      await initializePageDecodeSession(params?.requestid);
+    }
     const targetCount =
       activeTemplate?.datasourceTemplate?.requests?.filter(
         (item) => item.name !== 'first'

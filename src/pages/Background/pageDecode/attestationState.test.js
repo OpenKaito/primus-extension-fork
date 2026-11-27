@@ -6,6 +6,10 @@ import {
   createSingleFlight,
   hasCompleteCaptureCheckpoint,
   pageDecodeSessionBelongsToRequest,
+  algorithmResultAlreadyReported,
+  checkpointWriteBelongsToSession,
+  shouldRecoverUnreported00013,
+  shouldReplacePageDecodeSession,
   resolvePageDecodeAttestationState,
   transitionPageDecodeSession,
 } from './attestationState.js';
@@ -196,6 +200,88 @@ describe('pageDecode authoritative attestation state', () => {
       }),
       false
     );
+  });
+
+  it('rejects a stale init and still allows a newer request to replace', () => {
+    const liveSession = {
+      requestid: 'request-b',
+      phase: PAGE_DECODE_PHASE.CAPTURING,
+      updatedAt: 200,
+    };
+    assert.equal(
+      shouldReplacePageDecodeSession({
+        currentSession: liveSession,
+        requestid: 'request-a',
+        startedAt: 100,
+      }),
+      false
+    );
+    assert.equal(
+      shouldReplacePageDecodeSession({
+        currentSession: liveSession,
+        requestid: 'request-c',
+        startedAt: 200,
+      }),
+      true
+    );
+    assert.equal(
+      shouldReplacePageDecodeSession({
+        currentSession: liveSession,
+        requestid: 'request-b',
+        startedAt: 50,
+      }),
+      true
+    );
+    assert.equal(
+      shouldReplacePageDecodeSession({
+        currentSession: liveSession,
+        requestid: 'request-d',
+      }),
+      true
+    );
+  });
+
+  it('recovers only an unreported 00013 and treats terminal algorithm codes as reported', () => {
+    const terminalResult = {
+      requestid: 'request-1',
+      failReason: { code: '00013' },
+    };
+    assert.equal(
+      shouldRecoverUnreported00013({
+        requestid: 'request-1',
+        terminalResult,
+        outboxHasReport: false,
+      }),
+      true
+    );
+    assert.equal(
+      shouldRecoverUnreported00013({
+        requestid: 'request-1',
+        terminalResult,
+        outboxHasReport: true,
+      }),
+      false
+    );
+    assert.equal(algorithmResultAlreadyReported('{"retcode":"0"}'), true);
+    assert.equal(algorithmResultAlreadyReported('{"retcode":"2"}'), true);
+    assert.equal(algorithmResultAlreadyReported('{"retcode":"1"}'), false);
+    assert.equal(algorithmResultAlreadyReported('not-json'), false);
+    assert.equal(algorithmResultAlreadyReported(null), false);
+    assert.equal(
+      checkpointWriteBelongsToSession(
+        { requestid: 'request-b' },
+        'request-a'
+      ),
+      false
+    );
+    assert.equal(
+      checkpointWriteBelongsToSession(
+        { requestid: 'request-a' },
+        'request-a'
+      ),
+      true
+    );
+    assert.equal(checkpointWriteBelongsToSession(null, 'request-a'), true);
   });
 
   it('recovers a started request from storage after worker memory is lost', () => {

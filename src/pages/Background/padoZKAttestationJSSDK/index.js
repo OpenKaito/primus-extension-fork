@@ -267,6 +267,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
     let activeAttestationParams = {};
     let chainName;
     const requestid = uuidv4();
+    const kaitoStartedAt = Date.now();
     sdkParams = params;
 
     chainName = params.chainName;
@@ -808,6 +809,7 @@ export const padoZKAttestationJSSDKMsgListener = async (
           params: {
             ...currRequestTemplate,
             requestid,
+            kaitoStartedAt,
             verifyingDialogTimeoutMs: computeVerifyingDialogTimeoutMs(
               params.attRequest
             ),

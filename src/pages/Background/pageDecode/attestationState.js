@@ -42,6 +42,57 @@ export const pageDecodeSessionBelongsToRequest = ({
       (!activeTemplateRequestid || activeTemplateRequestid === requestid)
   );
 
+export const shouldReplacePageDecodeSession = ({
+  currentSession,
+  requestid,
+  startedAt,
+}) => {
+  if (!requestid) {
+    return false;
+  }
+  if (!currentSession || currentSession.requestid === requestid) {
+    return true;
+  }
+  const issuedAt = Number(startedAt);
+  const currentUpdatedAt = Number(currentSession.updatedAt);
+  if (!Number.isFinite(issuedAt) || !Number.isFinite(currentUpdatedAt)) {
+    return true;
+  }
+  return issuedAt >= currentUpdatedAt;
+};
+
+export const shouldRecoverUnreported00013 = ({
+  requestid,
+  terminalResult,
+  outboxHasReport,
+}) =>
+  Boolean(
+    requestid &&
+      terminalResult?.requestid === requestid &&
+      terminalResult?.failReason?.code === '00013' &&
+      !outboxHasReport
+  );
+
+export const checkpointWriteBelongsToSession = (session, requestid) =>
+  Boolean(requestid) && (!session?.requestid || session.requestid === requestid);
+
+export const algorithmResultAlreadyReported = (rawResult) => {
+  if (!rawResult) {
+    return false;
+  }
+  try {
+    const parsed =
+      typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
+    const retcode =
+      parsed?.retcode === undefined || parsed?.retcode === null
+        ? ''
+        : String(parsed.retcode);
+    return retcode === '0' || retcode === '2';
+  } catch (error) {
+    return false;
+  }
+};
+
 const PHASE_RANK = {
   [PAGE_DECODE_PHASE.CAPTURING]: 0,
   [PAGE_DECODE_PHASE.READY]: 1,

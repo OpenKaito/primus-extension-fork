@@ -178,6 +178,7 @@ const Nav: React.FC<PButtonProps> = memo(
             }
           }
           const requestid = uuidv4();
+          const kaitoStartedAt = Date.now();
           var eventInfo = {
             eventType: 'ATTESTATION_NEXT',
             rawData: {
@@ -204,6 +205,7 @@ const Nav: React.FC<PButtonProps> = memo(
             params: {
               ...currRequestTemplate,
               requestid,
+              kaitoStartedAt,
             },
             extensionTabId: currentWindowTabs[0].id,
             operation: 'attest',
