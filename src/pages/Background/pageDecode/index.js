@@ -93,6 +93,7 @@ import {
   createSerialQueue,
   createSingleFlight,
   hasCompleteCaptureCheckpoint,
+  pageDecodeSessionBelongsToRequest,
   resolvePageDecodeAttestationState,
   transitionPageDecodeSession,
 } from './attestationState.js';
@@ -1215,6 +1216,7 @@ const handleDataSourcePageDialogTimeout = async (
   terminalResult = timeoutTerminalResult;
 
   let rawData = {};
+  let timeoutReportRawData = null;
   let baseRawData = {
     status: 'FAILED',
     reason: 'Something went wrong',
@@ -1290,7 +1292,7 @@ const handleDataSourcePageDialogTimeout = async (
           rawData.event = parsedActiveRequestAttestation.event;
         }
         rawData = await addSDKParamsToReportParamsFn(rawData);
-        await eventReportFn(rawData);
+        timeoutReportRawData = rawData;
       }
     }
   } else {
@@ -1314,7 +1316,7 @@ const handleDataSourcePageDialogTimeout = async (
         if (parsedActiveRequestAttestation.event) {
           rawData.event = parsedActiveRequestAttestation.event;
         }
-        await eventReportFn(rawData);
+        timeoutReportRawData = rawData;
       }
     }
   }
@@ -1339,19 +1341,39 @@ const handleDataSourcePageDialogTimeout = async (
     };
     rawData = await addSDKParamsToReportParamsFn(rawData);
     reportRequestIds.push(timeoutRequestid);
-    await eventReportFn(rawData);
+    timeoutReportRawData = rawData;
   }
 
   processAlgorithmReq({
     reqMethodName: 'stop',
   });
-  await Promise.allSettled([
-    errorFn({
-      title: 'Request Timed Out',
-      desc: 'The process did not respond within 2 minutes. Please try again later.',
-      code: '00014',
-    }),
-  ]);
+  const completionTasks = [
+    {
+      name: 'SDK notification',
+      promise: errorFn({
+        title: 'Request Timed Out',
+        desc: 'The process did not respond within 2 minutes. Please try again later.',
+        code: '00014',
+      }),
+    },
+  ];
+  if (timeoutReportRawData) {
+    completionTasks.push({
+      name: 'event report',
+      promise: eventReportFn(timeoutReportRawData),
+    });
+  }
+  const completionResults = await Promise.allSettled(
+    completionTasks.map(({ promise }) => promise)
+  );
+  completionResults.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.log(
+        `pageDecode timeout ${completionTasks[index].name} failed`,
+        result.reason
+      );
+    }
+  });
   authoritativeState =
     await getAuthoritativePageDecodeState(timeoutRequestid);
   return {
@@ -3677,8 +3699,29 @@ const handleEnd = async (request) => {
         replace: true,
       });
     }
+    if (
+      !pageDecodeSessionBelongsToRequest({
+        requestid,
+        sessionRequestid: transition.session?.requestid,
+        activeTemplateRequestid: activeTemplate?.requestid,
+      })
+    ) {
+      return transition.session?.terminalResult;
+    }
     persistedTerminalResult =
       transition.session?.terminalResult || requestedTerminalResult;
+  }
+  if (requestid) {
+    const endState = await getAuthoritativePageDecodeState(requestid);
+    if (
+      !pageDecodeSessionBelongsToRequest({
+        requestid,
+        sessionRequestid: endState.requestid,
+        activeTemplateRequestid: activeTemplate?.requestid,
+      })
+    ) {
+      return endState.terminalResult;
+    }
   }
   terminalResult = persistedTerminalResult;
   if (dataSourcePageTabId) {
@@ -3686,6 +3729,18 @@ const handleEnd = async (request) => {
       ...request,
       params: persistedTerminalResult,
     });
+    if (requestid) {
+      const cleanupState = await getAuthoritativePageDecodeState(requestid);
+      if (
+        !pageDecodeSessionBelongsToRequest({
+          requestid,
+          sessionRequestid: cleanupState.requestid,
+          activeTemplateRequestid: activeTemplate?.requestid,
+        })
+      ) {
+        return cleanupState.terminalResult;
+      }
+    }
     chrome.webRequest.onBeforeSendHeaders.removeListener(onBeforeSendHeadersFn);
     chrome.webRequest.onBeforeRequest.removeListener(onBeforeRequestFn);
     chrome.webRequest.onCompleted.removeListener(onCompletedFn);

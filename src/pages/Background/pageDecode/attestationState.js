@@ -31,6 +31,17 @@ export const hasCompleteCaptureCheckpoint = (checkpoint, requestid) =>
       checkpoint.matchedTargetCount >= checkpoint.targetCount
   );
 
+export const pageDecodeSessionBelongsToRequest = ({
+  requestid,
+  sessionRequestid,
+  activeTemplateRequestid,
+}) =>
+  Boolean(
+    requestid &&
+      sessionRequestid === requestid &&
+      (!activeTemplateRequestid || activeTemplateRequestid === requestid)
+  );
+
 const PHASE_RANK = {
   [PAGE_DECODE_PHASE.CAPTURING]: 0,
   [PAGE_DECODE_PHASE.READY]: 1,

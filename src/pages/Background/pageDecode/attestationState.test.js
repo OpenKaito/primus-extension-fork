@@ -5,6 +5,7 @@ import {
   createSerialQueue,
   createSingleFlight,
   hasCompleteCaptureCheckpoint,
+  pageDecodeSessionBelongsToRequest,
   resolvePageDecodeAttestationState,
   transitionPageDecodeSession,
 } from './attestationState.js';
@@ -168,6 +169,33 @@ describe('pageDecode authoritative attestation state', () => {
 
     assert.equal(transition.applied, false);
     assert.deepEqual(transition.session, current);
+  });
+
+  it('only lets the request that still owns the session clean up listeners', () => {
+    assert.equal(
+      pageDecodeSessionBelongsToRequest({
+        requestid: 'request-1',
+        sessionRequestid: 'request-1',
+        activeTemplateRequestid: 'request-1',
+      }),
+      true
+    );
+    assert.equal(
+      pageDecodeSessionBelongsToRequest({
+        requestid: 'request-1',
+        sessionRequestid: 'request-2',
+        activeTemplateRequestid: 'request-2',
+      }),
+      false
+    );
+    assert.equal(
+      pageDecodeSessionBelongsToRequest({
+        requestid: 'request-1',
+        sessionRequestid: 'request-1',
+        activeTemplateRequestid: 'request-2',
+      }),
+      false
+    );
   });
 
   it('recovers a started request from storage after worker memory is lost', () => {
