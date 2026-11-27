@@ -214,6 +214,48 @@ describe('attestation report context', () => {
     ]);
   });
 
+  it('does not write delayed replay diagnostics into a newer context', async () => {
+    await initAttestationReportContext({
+      requestid: 'primus-1',
+      targetCount: 1,
+    });
+    const replayRequestid = values[ATTESTATION_REPORT_CONTEXT_KEY].requestid;
+    let releaseReplay;
+    const replayCanFinish = new Promise((resolve) => {
+      releaseReplay = resolve;
+    });
+    const delayedReplayWrite = (async () => {
+      await replayCanFinish;
+      await updateAttestationStepTarget(
+        'replayed',
+        '0:https://example.com/from-primus-1',
+        {
+          name: 'from-primus-1',
+          templateUrl: 'https://example.com/from-primus-1',
+          httpStatus: 401,
+        },
+        replayRequestid
+      );
+      await updateAttestationStepProgress('replayed', {
+        completed: 0,
+        total: 1,
+        requestid: replayRequestid,
+      });
+    })();
+
+    await initAttestationReportContext({
+      requestid: 'primus-2',
+      targetCount: 1,
+    });
+    releaseReplay();
+    await delayedReplayWrite;
+
+    const context = values[ATTESTATION_REPORT_CONTEXT_KEY];
+    assert.equal(context.requestid, 'primus-2');
+    assert.deepEqual(context.stepProgress.replayed.targets, []);
+    assert.equal(context.stepProgress.replayed.status, 'pending');
+  });
+
   it('reports not_marked_target in captured targets for 00013', async () => {
     await initAttestationReportContext({
       requestid: 'primus-1',

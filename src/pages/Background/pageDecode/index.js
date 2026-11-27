@@ -1095,6 +1095,8 @@ export const pageDecodeMsgListener = async (
     } = activeTemplate;
 
     const checkSDKTargetRequestFn = async (requestId, templateRequestUrl) => {
+      // activeTemplate can switch while a replay request is in flight.
+      const replayRequestid = activeTemplate?.requestid;
       const {
         datasourceTemplate: { requests, responses },
         additionParamsObj,
@@ -1120,8 +1122,15 @@ export const pageDecodeMsgListener = async (
           step,
           progressKey,
           target ? { ...targetIdentity, ...target } : null,
-          activeTemplate?.requestid
+          replayRequestid
         );
+      const updateStepProgress = (step, progress) =>
+        replayRequestid
+          ? updateAttestationStepProgress(step, {
+              ...progress,
+              requestid: replayRequestid,
+            })
+          : Promise.resolve();
 
       const { url, urlType, queryParams, ignoreResponse } = thisRequestObj;
       const bodyMatchesTemplate = (requestInfo, templateRequest) => {
@@ -1183,11 +1192,10 @@ export const pageDecodeMsgListener = async (
               updateStepTarget('replayed', null),
               updateStepTarget('validated', null),
             ]);
-            await updateAttestationStepProgress('replayed', {
+            await updateStepProgress('replayed', {
               completed: replayedTargetKeys.size,
               skipped: skippedReplayTargetKeys.size,
               total: targetCount,
-              requestid: activeTemplate?.requestid,
             });
           }
         } else {
@@ -1331,11 +1339,10 @@ export const pageDecodeMsgListener = async (
                   updateStepTarget('replayed', null),
                   updateStepTarget('validated', null),
                 ]);
-                await updateAttestationStepProgress('replayed', {
+                await updateStepProgress('replayed', {
                   completed: replayedTargetKeys.size,
                   skipped: skippedReplayTargetKeys.size,
                   total: targetCount,
-                  requestid: activeTemplate?.requestid,
                 });
                 break;
               }
@@ -1364,16 +1371,14 @@ export const pageDecodeMsgListener = async (
                     replayedTargetKeys.add(progressKey);
                     validatedTargetKeys.add(progressKey);
                     await updateStepTarget('validated', null);
-                    await updateAttestationStepProgress('replayed', {
+                    await updateStepProgress('replayed', {
                       completed: replayedTargetKeys.size,
                       skipped: skippedReplayTargetKeys.size,
                       total: targetCount,
-                      requestid: activeTemplate?.requestid,
                     });
-                    await updateAttestationStepProgress('validated', {
+                    await updateStepProgress('validated', {
                       completed: validatedTargetKeys.size,
                       total: targetCount,
-                      requestid: activeTemplate?.requestid,
                     });
                     break;
                   }
@@ -1420,11 +1425,10 @@ export const pageDecodeMsgListener = async (
               if (matchRequestUrlResult) {
                 replayedTargetKeys.add(progressKey);
                 await updateStepTarget('replayed', null);
-                await updateAttestationStepProgress('replayed', {
+                await updateStepProgress('replayed', {
                   completed: replayedTargetKeys.size,
                   skipped: skippedReplayTargetKeys.size,
                   total: targetCount,
-                  requestid: activeTemplate?.requestid,
                 });
               }
               const notMetHandler = async () => {
@@ -1538,10 +1542,9 @@ export const pageDecodeMsgListener = async (
                 storeRequestsMap(matchRequestId, { isTarget: 1 });
                 validatedTargetKeys.add(progressKey);
                 await updateStepTarget('validated', null);
-                await updateAttestationStepProgress('validated', {
+                await updateStepProgress('validated', {
                   completed: validatedTargetKeys.size,
                   total: targetCount,
-                  requestid: activeTemplate?.requestid,
                 });
                 break;
               } else {
