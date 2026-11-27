@@ -7,6 +7,7 @@ import {
   initAttestationReportContext,
   recordAttestationAlgorithmResponse,
   updateAttestationStepProgress,
+  updateAttestationStepTarget,
 } from './reportEvent.js';
 
 const values = {};
@@ -101,6 +102,217 @@ describe('attestation report context', () => {
     assert.deepEqual(rawData.detail.steps, ['captured']);
     assert.equal(rawData.detail.stepProgress.replayed.status, 'partial');
     assert.equal(rawData.detail.stepProgress.replayed.completed, 1);
+    assert.deepEqual(rawData.detail.stepProgress.validated.targets, []);
+  });
+
+  it('reports request-bound target failures and clears recovered targets', async () => {
+    await initAttestationReportContext({
+      requestid: 'primus-1',
+      targetCount: 3,
+    });
+    await updateAttestationStepProgress('captured', {
+      completed: 2,
+      total: 3,
+      requestid: 'primus-1',
+      targets: [
+        {
+          name: 'balance',
+          templateUrl: 'https://example.com/balance',
+          reason: 'not_observed',
+        },
+      ],
+    });
+    await updateAttestationStepTarget(
+      'replayed',
+      '1:https://example.com/positions',
+      {
+        name: 'positions',
+        templateUrl: 'https://example.com/positions',
+        httpStatus: 401,
+      },
+      'primus-1'
+    );
+    await updateAttestationStepTarget(
+      'replayed',
+      '1:https://example.com/positions',
+      {
+        name: 'positions',
+        templateUrl: 'https://example.com/positions',
+        httpStatus: 403,
+      },
+      'primus-1'
+    );
+    assert.deepEqual(
+      values[ATTESTATION_REPORT_CONTEXT_KEY].stepProgress.replayed.targets,
+      [
+        {
+          name: 'positions',
+          templateUrl: 'https://example.com/positions',
+          httpStatus: 403,
+        },
+      ]
+    );
+    await updateAttestationStepTarget(
+      'validated',
+      '2:https://example.com/profile',
+      {
+        name: 'profile',
+        templateUrl: 'https://example.com/profile',
+        missingPath: '$.user.tier',
+      },
+      'primus-1'
+    );
+    await updateAttestationStepTarget(
+      'validated',
+      'stale-target',
+      {
+        name: 'stale',
+        templateUrl: 'https://example.com/stale',
+        missingPath: '$.stale',
+      },
+      'primus-2'
+    );
+    await updateAttestationStepTarget(
+      'validated',
+      'unbound-target',
+      {
+        name: 'unbound',
+        templateUrl: 'https://example.com/unbound',
+        missingPath: '$.unbound',
+      }
+    );
+    await updateAttestationStepTarget(
+      'replayed',
+      '1:https://example.com/positions',
+      null,
+      'primus-1'
+    );
+
+    const rawData = await enrichAttestationReportRawData(
+      'ATTESTATION_GENERATE',
+      {
+        requestid: 'primus-1',
+        status: 'FAILED',
+        detail: { code: '00013', desc: 'Target data missing' },
+      }
+    );
+
+    assert.deepEqual(rawData.detail.stepProgress.captured.targets, [
+      {
+        name: 'balance',
+        templateUrl: 'https://example.com/balance',
+        reason: 'not_observed',
+      },
+    ]);
+    assert.deepEqual(rawData.detail.stepProgress.replayed.targets, []);
+    assert.deepEqual(rawData.detail.stepProgress.validated.targets, [
+      {
+        name: 'profile',
+        templateUrl: 'https://example.com/profile',
+        missingPath: '$.user.tier',
+      },
+    ]);
+  });
+
+  it('does not write delayed replay diagnostics into a newer context', async () => {
+    await initAttestationReportContext({
+      requestid: 'primus-1',
+      targetCount: 1,
+    });
+    const replayRequestid = values[ATTESTATION_REPORT_CONTEXT_KEY].requestid;
+    let releaseReplay;
+    const replayCanFinish = new Promise((resolve) => {
+      releaseReplay = resolve;
+    });
+    const delayedReplayWrite = (async () => {
+      await replayCanFinish;
+      await updateAttestationStepTarget(
+        'replayed',
+        '0:https://example.com/from-primus-1',
+        {
+          name: 'from-primus-1',
+          templateUrl: 'https://example.com/from-primus-1',
+          httpStatus: 401,
+        },
+        replayRequestid
+      );
+      await updateAttestationStepProgress('replayed', {
+        completed: 0,
+        total: 1,
+        requestid: replayRequestid,
+      });
+    })();
+
+    await initAttestationReportContext({
+      requestid: 'primus-2',
+      targetCount: 1,
+    });
+    releaseReplay();
+    await delayedReplayWrite;
+
+    const context = values[ATTESTATION_REPORT_CONTEXT_KEY];
+    assert.equal(context.requestid, 'primus-2');
+    assert.deepEqual(context.stepProgress.replayed.targets, []);
+    assert.equal(context.stepProgress.replayed.status, 'pending');
+  });
+
+  it('reports not_marked_target in captured targets for 00013', async () => {
+    await initAttestationReportContext({
+      requestid: 'primus-1',
+      targetCount: 2,
+    });
+    await updateAttestationStepProgress('captured', {
+      completed: 1,
+      total: 2,
+      requestid: 'primus-1',
+      targets: [
+        {
+          name: 'balance',
+          templateUrl: 'https://example.com/balance',
+          reason: 'not_observed',
+        },
+        {
+          name: 'positions',
+          templateUrl: 'https://example.com/positions',
+          reason: 'not_marked_target',
+        },
+      ],
+    });
+    const rawData = await enrichAttestationReportRawData(
+      'ATTESTATION_GENERATE',
+      {
+        requestid: 'primus-1',
+        status: 'FAILED',
+        detail: { code: '00013', desc: 'Target data missing' },
+      }
+    );
+    assert.deepEqual(
+      rawData.detail.stepProgress.captured.targets.find(
+        (target) => target.templateUrl === 'https://example.com/positions'
+      ),
+      {
+        name: 'positions',
+        templateUrl: 'https://example.com/positions',
+        reason: 'not_marked_target',
+      }
+    );
+  });
+
+  it('does not attach pipeline diagnostics to a non-00013 event', async () => {
+    await initAttestationReportContext({
+      requestid: 'primus-1',
+      targetCount: 1,
+    });
+    const rawData = await enrichAttestationReportRawData(
+      'ATTESTATION_GENERATE',
+      {
+        requestid: 'primus-1',
+        status: 'FAILED',
+        detail: { code: '00014', desc: 'Timed out' },
+      }
+    );
+
+    assert.equal(rawData.detail.stepProgress, undefined);
   });
 
   it('clears the context', async () => {

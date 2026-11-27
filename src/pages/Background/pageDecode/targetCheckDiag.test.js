@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeKeys, describeTargetCheck, mergeTargetCheck } from './targetCheckDiag.js';
+import {
+  describeKeys,
+  describeReplayFailure,
+  describeTargetCheck,
+  mergeTargetCheck,
+} from './targetCheckDiag.js';
 
 const query = (value, path) => {
   const parts = path.match(/\.[^.[\]]+|\[\d+\]/g) || [];
@@ -57,5 +62,31 @@ describe('mergeTargetCheck', () => {
     record = mergeTargetCheck(record, 'https://a/x', { outcome: 'ok' }, 2);
     assert.deepEqual(record.targets['https://a/x'], { outcome: 'ok', n: 2, at: 2 });
     assert.equal(record.at, 2);
+  });
+});
+
+describe('describeReplayFailure', () => {
+  it('prefers a structured HTTP status and falls back to the error message', () => {
+    const structured = new Error('Forbidden');
+    structured.httpStatus = 403;
+    assert.deepEqual(describeReplayFailure(structured), { httpStatus: 403 });
+    assert.deepEqual(describeReplayFailure('HTTP error! status: 401'), {
+      httpStatus: 401,
+    });
+  });
+
+  it('classifies non-JSON, CORS, network, and unknown failures', () => {
+    assert.deepEqual(describeReplayFailure('non-object response: string'), {
+      reason: 'non_json',
+    });
+    assert.deepEqual(describeReplayFailure('Blocked by CORS policy'), {
+      reason: 'cors',
+    });
+    assert.deepEqual(describeReplayFailure(new TypeError('Failed to fetch')), {
+      reason: 'network',
+    });
+    assert.deepEqual(describeReplayFailure('unexpected replay failure'), {
+      reason: 'unknown',
+    });
   });
 });

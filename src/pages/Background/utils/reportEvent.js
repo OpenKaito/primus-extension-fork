@@ -19,9 +19,21 @@ const enqueueContextOperation = (operation) => {
 };
 
 const defaultStepProgress = () => ({
-  captured: { status: 'pending', completed: 0, total: 0 },
-  replayed: { status: 'pending', completed: 0, total: 0, skipped: 0 },
-  validated: { status: 'pending', completed: 0, total: 0 },
+  captured: { status: 'pending', completed: 0, total: 0, targets: [] },
+  replayed: {
+    status: 'pending',
+    completed: 0,
+    total: 0,
+    skipped: 0,
+    targets: [],
+  },
+  validated: { status: 'pending', completed: 0, total: 0, targets: [] },
+});
+
+const defaultStepTargetRecords = () => ({
+  captured: {},
+  replayed: {},
+  validated: {},
 });
 
 export const initAttestationReportContext = ({
@@ -46,6 +58,7 @@ export const initAttestationReportContext = ({
         attConditions,
         steps: [],
         stepProgress,
+        stepTargetRecords: defaultStepTargetRecords(),
         getAttestationResCount: 0,
         getAttestationResultResCount: 0,
       },
@@ -86,7 +99,7 @@ const updateAttestationReportContext = (update, expectedRequestid) =>
 
 export const updateAttestationStepProgress = (
   step,
-  { completed, total, skipped = 0 }
+  { completed, total, skipped = 0, targets, requestid }
 ) =>
   updateAttestationReportContext((context) => {
     const current = context.stepProgress?.[step] || {};
@@ -108,6 +121,7 @@ export const updateAttestationStepProgress = (
         status,
         completed,
         total: nextTotal,
+        ...(targets !== undefined && requestid ? { targets } : {}),
         ...(step === 'replayed' ? { skipped } : {}),
       },
     };
@@ -116,7 +130,48 @@ export const updateAttestationStepProgress = (
       (name) => stepProgress[name]?.status === 'success'
     );
     return { ...context, steps, stepProgress };
-  });
+  }, requestid);
+
+export const updateAttestationStepTarget = (
+  step,
+  targetKey,
+  target,
+  requestid
+) => {
+  if (!requestid) {
+    return Promise.resolve();
+  }
+  return updateAttestationReportContext((context) => {
+    if (
+      !['captured', 'replayed', 'validated'].includes(step) ||
+      !targetKey
+    ) {
+      return context;
+    }
+    const stepTargetRecords = {
+      ...defaultStepTargetRecords(),
+      ...context.stepTargetRecords,
+      [step]: {
+        ...(context.stepTargetRecords?.[step] || {}),
+      },
+    };
+    if (target) {
+      stepTargetRecords[step][targetKey] = target;
+    } else {
+      delete stepTargetRecords[step][targetKey];
+    }
+    const stepProgress = {
+      ...defaultStepProgress(),
+      ...context.stepProgress,
+      [step]: {
+        ...defaultStepProgress()[step],
+        ...context.stepProgress?.[step],
+        targets: Object.values(stepTargetRecords[step]),
+      },
+    };
+    return { ...context, stepTargetRecords, stepProgress };
+  }, requestid);
+};
 
 export const recordAttestationAlgorithmResponse = (
   resMethodName,

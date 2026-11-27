@@ -70,7 +70,9 @@ export async function customFetch2({ url, method, body, header, isFormData }) {
   const attempt = async (credentials) => {
     const response = await fetch(url, { ...finalOptions, credentials });
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const error = new Error(`HTTP error! status: ${response.status}`);
+      error.httpStatus = response.status;
+      throw error;
     }
     const contentType = response.headers.get('Content-Type') || '';
 
