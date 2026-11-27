@@ -54,11 +54,16 @@ export const shouldReplacePageDecodeSession = ({
     return true;
   }
   const issuedAt = Number(startedAt);
-  const currentUpdatedAt = Number(currentSession.updatedAt);
-  if (!Number.isFinite(issuedAt) || !Number.isFinite(currentUpdatedAt)) {
+  if (!Number.isFinite(issuedAt)) {
+    return false;
+  }
+  const currentCreatedAt = Number(
+    currentSession.createdAt ?? currentSession.updatedAt
+  );
+  if (!Number.isFinite(currentCreatedAt)) {
     return true;
   }
-  return issuedAt >= currentUpdatedAt;
+  return issuedAt >= currentCreatedAt;
 };
 
 export const shouldRecoverUnreported00013 = ({
@@ -162,6 +167,7 @@ export const transitionPageDecodeSession = (
         phase,
         terminalResult:
           phase === PAGE_DECODE_PHASE.TERMINAL ? terminalResult || null : null,
+        createdAt: now,
         updatedAt: now,
       },
     };

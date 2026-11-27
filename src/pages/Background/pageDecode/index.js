@@ -143,7 +143,6 @@ let reportRequestIds = [];
 let hasStartedPageDecodeAttestation = false;
 const pageDecodeSessionQueue = createSerialQueue();
 const pageDecodeCaptureCheckpointQueue = createSerialQueue();
-const pageDecodeReportOutboxQueue = createSerialQueue();
 const startPageDecodeAttestationSingleFlight = createSingleFlight();
 let replayedTargetKeys = new Set();
 let validatedTargetKeys = new Set();
@@ -920,7 +919,7 @@ const extraRequestFn = async () => {
   }
 };
 const removePageDecodeReportOutboxEntry = (reportEventId) =>
-  pageDecodeReportOutboxQueue.run(async () => {
+  pageDecodeSessionQueue.run(async () => {
     const { [PAGE_DECODE_REPORT_OUTBOX_KEY]: outbox = {} } =
       await chrome.storage.local.get([PAGE_DECODE_REPORT_OUTBOX_KEY]);
     if (!outbox[reportEventId]) {
@@ -935,7 +934,7 @@ const removePageDecodeReportOutboxEntry = (reportEventId) =>
 
 const deliverPageDecodeReport = async (entry, persist = true) => {
   if (persist) {
-    await pageDecodeReportOutboxQueue.run(async () => {
+    await pageDecodeSessionQueue.run(async () => {
       const { [PAGE_DECODE_REPORT_OUTBOX_KEY]: outbox = {} } =
         await chrome.storage.local.get([PAGE_DECODE_REPORT_OUTBOX_KEY]);
       const nextOutbox = {
@@ -1051,7 +1050,8 @@ const handle00013 = async (requestid, expectedCaptureRevision) => {
       await chrome.storage.local.get([PAGE_DECODE_CAPTURE_CHECKPOINT_KEY]);
     if (
       hasCompleteCaptureCheckpoint(captureCheckpoint, requestid) &&
-      Object.keys(requestsMap).length > 0
+      captureCheckpoint.revision > 0 &&
+      captureCheckpoint.revision === captureActivityRevision
     ) {
       return {
         accepted: false,
@@ -1278,30 +1278,10 @@ const handleDataSourcePageDialogTimeout = async (
     },
     requestid: timeoutRequestid,
   };
-  if (timeoutRequestid) {
-    let transition = await transitionPageDecodeSessionState({
-      requestid: timeoutRequestid,
-      phase: PAGE_DECODE_PHASE.TERMINAL,
-      terminalResult: timeoutTerminalResult,
-    });
-    if (!transition.applied && !transition.session) {
-      transition = await transitionPageDecodeSessionState({
-        requestid: timeoutRequestid,
-        phase: PAGE_DECODE_PHASE.TERMINAL,
-        terminalResult: timeoutTerminalResult,
-        replace: true,
-      });
-    }
-    if (!transition.applied) {
-      authoritativeState =
-        await getAuthoritativePageDecodeState(timeoutRequestid);
-      return { accepted: false, ...authoritativeState };
-    }
-  }
-  terminalResult = timeoutTerminalResult;
 
   let rawData = {};
   let timeoutReportRawData = null;
+  let pendingReportRequestid = null;
   let baseRawData = {
     status: 'FAILED',
     reason: 'Something went wrong',
@@ -1315,37 +1295,16 @@ const handleDataSourcePageDialogTimeout = async (
     padoZKAttestationJSSDKAttestationPresetParams,
     activeRequestAttestation,
     [ATTESTATION_REPORT_CONTEXT_KEY]: attestationReportContext,
+    beginAttest,
+    getAttestationResultRes,
   } = await chrome.storage.local.get([
     'padoZKAttestationJSSDKBeginAttest',
     'padoZKAttestationJSSDKAttestationPresetParams',
     'activeRequestAttestation',
     ATTESTATION_REPORT_CONTEXT_KEY,
+    'beginAttest',
+    'getAttestationResultRes',
   ]);
-  const eventReportFn = async (rawData) => {
-    const { beginAttest, getAttestationResultRes } =
-      await chrome.storage.local.get([
-        'beginAttest',
-        'getAttestationResultRes',
-      ]);
-
-    const boundAlgorithmResult =
-      attestationReportContext?.requestid === timeoutRequestid
-        ? attestationReportContext.getAttestationResultRes
-        : getAttestationResultRes;
-
-    if (beginAttest === '1') {
-      rawData.getAttestationResultRes = boundAlgorithmResult;
-    }
-
-    if (!algorithmResultAlreadyReported(boundAlgorithmResult)) {
-      var eventInfo = {
-        eventType: 'ATTESTATION_GENERATE',
-        rawData,
-      };
-      return eventReport(eventInfo);
-    }
-    return undefined;
-  };
   if (padoZKAttestationJSSDKBeginAttest) {
     if (padoZKAttestationJSSDKAttestationPresetParams) {
       const parsedActiveRequestAttestation = JSON.parse(
@@ -1355,7 +1314,7 @@ const handleDataSourcePageDialogTimeout = async (
         parsedActiveRequestAttestation.requestid === timeoutRequestid &&
         !reportRequestIds.includes(parsedActiveRequestAttestation.requestid)
       ) {
-        reportRequestIds.push(parsedActiveRequestAttestation.requestid);
+        pendingReportRequestid = parsedActiveRequestAttestation.requestid;
         const userAddress = parsedActiveRequestAttestation?.ext
           ?.appSignParameters
           ? JSON.parse(parsedActiveRequestAttestation.ext.appSignParameters)
@@ -1389,7 +1348,7 @@ const handleDataSourcePageDialogTimeout = async (
         parsedActiveRequestAttestation.requestid === timeoutRequestid &&
         !reportRequestIds.includes(parsedActiveRequestAttestation.requestid)
       ) {
-        reportRequestIds.push(parsedActiveRequestAttestation.requestid);
+        pendingReportRequestid = parsedActiveRequestAttestation.requestid;
         rawData = {
           source: parsedActiveRequestAttestation.source,
           schemaType: parsedActiveRequestAttestation.schemaType,
@@ -1425,8 +1384,50 @@ const handleDataSourcePageDialogTimeout = async (
       ...baseRawData,
     };
     rawData = await addSDKParamsToReportParamsFn(rawData);
-    reportRequestIds.push(timeoutRequestid);
+    pendingReportRequestid = timeoutRequestid;
     timeoutReportRawData = rawData;
+  }
+
+  let reportEntry = null;
+  if (timeoutReportRawData) {
+    const boundAlgorithmResult =
+      attestationReportContext?.requestid === timeoutRequestid
+        ? attestationReportContext.getAttestationResultRes
+        : getAttestationResultRes;
+    if (beginAttest === '1') {
+      timeoutReportRawData.getAttestationResultRes = boundAlgorithmResult;
+    }
+    if (!algorithmResultAlreadyReported(boundAlgorithmResult)) {
+      reportEntry = await buildPageDecodeReportEntry(timeoutReportRawData);
+    }
+  }
+
+  if (timeoutRequestid) {
+    let transition = await transitionPageDecodeSessionState({
+      requestid: timeoutRequestid,
+      phase: PAGE_DECODE_PHASE.TERMINAL,
+      terminalResult: timeoutTerminalResult,
+      reportEntry,
+    });
+    if (!transition.applied && !transition.session) {
+      transition = await transitionPageDecodeSessionState({
+        requestid: timeoutRequestid,
+        phase: PAGE_DECODE_PHASE.TERMINAL,
+        terminalResult: timeoutTerminalResult,
+        replace: true,
+        reportEntry,
+      });
+    }
+    if (!transition.applied) {
+      authoritativeState =
+        await getAuthoritativePageDecodeState(timeoutRequestid);
+      return { accepted: false, ...authoritativeState };
+    }
+  }
+  terminalResult = timeoutTerminalResult;
+
+  if (pendingReportRequestid) {
+    reportRequestIds.push(pendingReportRequestid);
   }
 
   processAlgorithmReq({
@@ -1442,10 +1443,10 @@ const handleDataSourcePageDialogTimeout = async (
       }),
     },
   ];
-  if (timeoutReportRawData) {
+  if (reportEntry) {
     completionTasks.push({
       name: 'event report',
-      promise: eventReportFn(timeoutReportRawData),
+      promise: deliverPageDecodeReport(reportEntry, false),
     });
   }
   const completionResults = await Promise.allSettled(

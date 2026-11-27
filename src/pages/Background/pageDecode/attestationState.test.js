@@ -206,7 +206,8 @@ describe('pageDecode authoritative attestation state', () => {
     const liveSession = {
       requestid: 'request-b',
       phase: PAGE_DECODE_PHASE.CAPTURING,
-      updatedAt: 200,
+      createdAt: 200,
+      updatedAt: 300,
     };
     assert.equal(
       shouldReplacePageDecodeSession({
@@ -237,7 +238,33 @@ describe('pageDecode authoritative attestation state', () => {
         currentSession: liveSession,
         requestid: 'request-d',
       }),
-      true
+      false,
+      'absent startedAt rejects replace to prevent clobber'
+    );
+  });
+
+  it('falls back to updatedAt for sessions without createdAt', () => {
+    const legacySession = {
+      requestid: 'request-b',
+      phase: PAGE_DECODE_PHASE.CAPTURING,
+      updatedAt: 200,
+    };
+    assert.equal(
+      shouldReplacePageDecodeSession({
+        currentSession: legacySession,
+        requestid: 'request-c',
+        startedAt: 200,
+      }),
+      true,
+      'uses updatedAt when createdAt is absent'
+    );
+    assert.equal(
+      shouldReplacePageDecodeSession({
+        currentSession: legacySession,
+        requestid: 'request-c',
+        startedAt: 100,
+      }),
+      false,
     );
   });
 
