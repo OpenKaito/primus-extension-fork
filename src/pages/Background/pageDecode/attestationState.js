@@ -72,6 +72,18 @@ export const shouldReplacePageDecodeSession = ({
   return issuedAt >= currentCreatedAt;
 };
 
+export const isDuplicatePageDecodeInit = ({
+  currentSession,
+  requestid,
+  acceptedInitRequestid,
+}) =>
+  Boolean(
+    requestid &&
+      acceptedInitRequestid === requestid &&
+      currentSession?.requestid === requestid &&
+      currentSession.phase !== PAGE_DECODE_PHASE.TERMINAL
+  );
+
 export const shouldRecoverUnreported00013 = ({
   requestid,
   terminalResult,

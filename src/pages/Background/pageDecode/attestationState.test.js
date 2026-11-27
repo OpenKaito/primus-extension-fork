@@ -8,6 +8,7 @@ import {
   pageDecodeSessionBelongsToRequest,
   algorithmResultAlreadyReported,
   checkpointWriteBelongsToSession,
+  isDuplicatePageDecodeInit,
   shouldRecoverUnreported00013,
   shouldReplacePageDecodeSession,
   resolvePageDecodeAttestationState,
@@ -254,6 +255,49 @@ describe('pageDecode authoritative attestation state', () => {
       }),
       false,
       'same requestid in non-capturing phase rejects duplicate init'
+    );
+  });
+
+  it('treats a same-id re-init of a live session as a no-op', () => {
+    const capturing = {
+      requestid: 'request-a',
+      phase: PAGE_DECODE_PHASE.CAPTURING,
+    };
+    assert.equal(
+      isDuplicatePageDecodeInit({
+        currentSession: capturing,
+        requestid: 'request-a',
+        acceptedInitRequestid: 'request-a',
+      }),
+      true
+    );
+    assert.equal(
+      isDuplicatePageDecodeInit({
+        currentSession: capturing,
+        requestid: 'request-a',
+        acceptedInitRequestid: null,
+      }),
+      false,
+      'worker restart must be able to rebuild in-memory state'
+    );
+    assert.equal(
+      isDuplicatePageDecodeInit({
+        currentSession: capturing,
+        requestid: 'request-b',
+        acceptedInitRequestid: 'request-a',
+      }),
+      false
+    );
+    assert.equal(
+      isDuplicatePageDecodeInit({
+        currentSession: {
+          requestid: 'request-a',
+          phase: PAGE_DECODE_PHASE.TERMINAL,
+        },
+        requestid: 'request-a',
+        acceptedInitRequestid: 'request-a',
+      }),
+      false
     );
   });
 

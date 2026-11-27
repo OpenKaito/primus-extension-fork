@@ -95,6 +95,7 @@ import {
   algorithmResultAlreadyReported,
   checkpointWriteBelongsToSession,
   hasCompleteCaptureCheckpoint,
+  isDuplicatePageDecodeInit,
   pageDecodeSessionBelongsToRequest,
   resolvePageDecodeAttestationState,
   shouldRecoverUnreported00013,
@@ -142,6 +143,7 @@ let requestsMap = {};
 let reportRequestIds = [];
 let hasStartedPageDecodeAttestation = false;
 const pageDecodeSessionQueue = createSerialQueue();
+let acceptedInitRequestid = null;
 const pageDecodeCaptureCheckpointQueue = createSerialQueue();
 const startPageDecodeAttestationSingleFlight = createSingleFlight();
 let replayedTargetKeys = new Set();
@@ -416,6 +418,15 @@ const initializePageDecodeSession = (
       PAGE_DECODE_SESSION_KEY,
     ]);
     if (
+      isDuplicatePageDecodeInit({
+        currentSession,
+        requestid,
+        acceptedInitRequestid,
+      })
+    ) {
+      return { applied: false, duplicate: true, session: currentSession };
+    }
+    if (
       !shouldReplacePageDecodeSession({
         currentSession,
         requestid,
@@ -462,6 +473,7 @@ const initializePageDecodeSession = (
         },
       })
     );
+    acceptedInitRequestid = requestid;
     return transition;
   });
 
@@ -1502,6 +1514,13 @@ export const pageDecodeMsgListener = async (
       });
       if (initResult?.stale) {
         return { accepted: false, staleInit: true };
+      }
+      if (initResult?.duplicate) {
+        return {
+          accepted: true,
+          duplicateInit: true,
+          session: initResult.session,
+        };
       }
     }
     terminalResult = null;
