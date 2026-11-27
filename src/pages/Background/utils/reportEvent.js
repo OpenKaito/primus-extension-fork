@@ -31,12 +31,34 @@ export const initAttestationReportContext = ({
   templateId,
   attConditions,
   targetCount = 0,
+  source,
+  schemaType,
+  sigFormat,
+  event,
+  attestOrigin,
 }) =>
   enqueueContextOperation(async () => {
     const stepProgress = defaultStepProgress();
     Object.values(stepProgress).forEach((step) => {
       step.total = targetCount;
     });
+    const stored = await chrome.storage.local.get([
+      ATTESTATION_REPORT_CONTEXT_KEY,
+    ]);
+    const existing = stored[ATTESTATION_REPORT_CONTEXT_KEY];
+    // A same-request re-init only happens after the worker restarted with the
+    // session still capturing; its in-memory progress is gone, so keep the
+    // persisted progress and use it as a floor for later writes.
+    const resumedProgress =
+      Boolean(requestid) &&
+      existing?.requestid === requestid &&
+      existing.stepProgress
+        ? {
+            steps: existing.steps || [],
+            stepProgress: existing.stepProgress,
+            stepProgressFloor: existing.stepProgress,
+          }
+        : {};
     await chrome.storage.local.set({
       [ATTESTATION_REPORT_CONTEXT_KEY]: {
         address,
@@ -44,10 +66,16 @@ export const initAttestationReportContext = ({
         kaitoRequestId,
         templateId,
         attConditions,
+        source,
+        schemaType,
+        sigFormat,
+        event,
+        attestOrigin,
         steps: [],
         stepProgress,
         getAttestationResCount: 0,
         getAttestationResultResCount: 0,
+        ...resumedProgress,
       },
     });
   });
@@ -86,10 +114,18 @@ const updateAttestationReportContext = (update, expectedRequestid) =>
 
 export const updateAttestationStepProgress = (
   step,
-  { completed, total, skipped = 0 }
+  { completed, total, skipped = 0 },
+  requestid
 ) =>
   updateAttestationReportContext((context) => {
     const current = context.stepProgress?.[step] || {};
+    const floor = context.stepProgressFloor?.[step];
+    const floorCompleted = Number(floor?.completed) || 0;
+    const floorSkipped = Number(floor?.skipped) || 0;
+    if (completed + skipped < floorCompleted + floorSkipped) {
+      completed = floorCompleted;
+      skipped = floorSkipped;
+    }
     const nextTotal = total ?? current.total ?? 0;
     const finished = completed + skipped;
     const status =
@@ -98,8 +134,8 @@ export const updateAttestationStepProgress = (
           ? 'skipped'
           : 'success'
         : completed > 0 || skipped > 0
-          ? 'partial'
-          : 'pending';
+        ? 'partial'
+        : 'pending';
     const stepProgress = {
       ...defaultStepProgress(),
       ...context.stepProgress,
@@ -116,7 +152,7 @@ export const updateAttestationStepProgress = (
       (name) => stepProgress[name]?.status === 'success'
     );
     return { ...context, steps, stepProgress };
-  });
+  }, requestid || undefined);
 
 export const recordAttestationAlgorithmResponse = (
   resMethodName,
@@ -188,8 +224,7 @@ export const enrichAttestationReportRawData = async (eventType, rawData) => {
       getAttestationRes: context.getAttestationRes ?? null,
       getAttestationResultRes: context.getAttestationResultRes ?? null,
       getAttestationResCount: context.getAttestationResCount || 0,
-      getAttestationResultResCount:
-        context.getAttestationResultResCount || 0,
+      getAttestationResultResCount: context.getAttestationResultResCount || 0,
     };
   }
   return enriched;

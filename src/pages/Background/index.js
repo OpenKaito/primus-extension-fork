@@ -14,10 +14,7 @@ import {
   recordAttestationAlgorithmResponse,
 } from './utils/reportEvent.js';
 
-import {
-  SocailStoreVersion,
-  padoExtensionVersion,
-} from '@/config/constants';
+import { SocailStoreVersion, padoExtensionVersion } from '@/config/constants';
 import {
   default as processExReq,
   clear,
@@ -281,10 +278,10 @@ const processAlgorithmReq = async (message, port) => {
         attestationParams.proxyUrl = 'wss://api2.padolabs.org/algoproxy';
       }
       try {
-        const appSignParameters =
-          attestationParams?.appParameters?.appSignParameters
-            ? JSON.parse(attestationParams.appParameters.appSignParameters)
-            : undefined;
+        const appSignParameters = attestationParams?.appParameters
+          ?.appSignParameters
+          ? JSON.parse(attestationParams.appParameters.appSignParameters)
+          : undefined;
         await chrome.storage.local.set({
           kaitoPrimusAlgorithmParamsDebug: {
             source: attestationParams.source,
@@ -630,9 +627,25 @@ const onDisconnectFullScreen = (port) => {
   fullscreenPort = null;
 };
 
-chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('background onMessage message', message, fullscreenPort);
   const { resType, type, name, params } = message;
+  let hasGetTwitterScreenName = false;
+  if (type === 'pageDecode') {
+    pageDecodeMsgListener(
+      message,
+      sender,
+      sendResponse,
+      USERPASSWORD,
+      fullscreenPort,
+      hasGetTwitterScreenName,
+      processAlgorithmReq
+    ).then(sendResponse, (error) => {
+      console.log('pageDecodeMsgListener error', error);
+      sendResponse(null);
+    });
+    return true;
+  }
   if (resType === 'algorithm') {
     recordAttestationAlgorithmResponse(
       message.resMethodName,
@@ -656,21 +669,15 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
           ...params,
         },
       };
-      eventInfo.rawData = await addSDKParamsToReportParamsFn(eventInfo.rawData);
-      eventReport(eventInfo);
+      addSDKParamsToReportParamsFn(eventInfo.rawData)
+        .then((rawData) => {
+          eventInfo.rawData = rawData;
+          eventReport(eventInfo);
+        })
+        .catch((error) => {
+          console.log('offscreen report enrichment error', error);
+        });
     }
-  }
-  let hasGetTwitterScreenName = false;
-  if (type === 'pageDecode') {
-    pageDecodeMsgListener(
-      message,
-      sender,
-      sendResponse,
-      USERPASSWORD,
-      fullscreenPort,
-      hasGetTwitterScreenName,
-      processAlgorithmReq
-    );
   }
   if (type === 'padoWebsite') {
     PadoWebsiteMsgListener(message, sender, sendResponse);

@@ -162,6 +162,7 @@ const useALGAttest = function useAttest() {
               type: 'pageDecode',
               name: 'end',
               params: {
+                requestid: parsedActiveRequestAttestation.requestid,
                 result: 'warn',
                 failReason: {
                   ...msgObj,
@@ -266,6 +267,7 @@ const useALGAttest = function useAttest() {
                 type: 'pageDecode',
                 name: 'end',
                 params: {
+                  requestid: parsedActiveRequestAttestation.requestid,
                   result: 'success',
                 },
               });
@@ -370,6 +372,7 @@ const useALGAttest = function useAttest() {
               type: 'pageDecode',
               name: 'end',
               params: {
+                requestid: parsedActiveRequestAttestation.requestid,
                 result: 'warn',
                 failReason: { ...msgObj },
               },
@@ -464,6 +467,7 @@ const useALGAttest = function useAttest() {
               type: 'pageDecode',
               name: 'end',
               params: {
+                requestid: parsedActiveRequestAttestation.requestid,
                 result: 'warn',
                 failReason: { ...msgObj },
               },
@@ -517,6 +521,7 @@ const useALGAttest = function useAttest() {
         type: 'pageDecode',
         name: 'end',
         params: {
+          requestid: parsedActiveRequestAttestation.requestid,
           result: 'warn',
           failReason: { ...msgObj },
         },

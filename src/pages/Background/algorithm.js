@@ -121,6 +121,7 @@ export const algorithmMsgListener = async (
             {
               name: 'end',
               params: {
+                requestid: message.requestid,
                 result: 'warn',
                 failReason: {
                   ...msgObj,
@@ -222,6 +223,7 @@ export const algorithmMsgListener = async (
               {
                 name: 'end',
                 params: {
+                  requestid: message.requestid,
                   result: 'success',
                 },
               },
@@ -436,6 +438,7 @@ export const algorithmMsgListener = async (
               {
                 name: 'end',
                 params: {
+                  requestid: message.requestid,
                   result: 'warn',
                   failReason: { ...msgObj },
                 },
@@ -535,6 +538,7 @@ export const algorithmMsgListener = async (
             {
               name: 'end',
               params: {
+                requestid: message.requestid,
                 result: 'warn',
                 failReason: { ...msgObj },
               },

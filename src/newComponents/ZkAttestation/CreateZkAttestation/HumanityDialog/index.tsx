@@ -342,6 +342,7 @@ const Nav: React.FC<PButtonProps> = memo(({ type, onClose, presets }) => {
           ...activeAttestationParams,
         };
         const requestid = uuidv4();
+        const kaitoStartedAt = Date.now();
         var eventInfo = {
           eventType: 'ATTESTATION_NEXT',
           rawData: {
@@ -365,6 +366,7 @@ const Nav: React.FC<PButtonProps> = memo(({ type, onClose, presets }) => {
           params: {
             ...currRequestTemplate,
             requestid,
+            kaitoStartedAt,
           },
           extensionTabId: currentWindowTabs[0].id,
           operation: 'attest',
